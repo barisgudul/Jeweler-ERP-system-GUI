@@ -1,0 +1,11 @@
+name: kuyumcu-erp
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pyqt>=6.6,<7
+  - python-dateutil
+  - reportlab
+  - openpyxl
+  - matplotlib
+  - pip
