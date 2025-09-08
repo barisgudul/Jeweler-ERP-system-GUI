@@ -72,14 +72,16 @@ QPushButton {{
 QPushButton:hover {{ border-color: {p['FOCUS']}; }}
 QPushButton:pressed {{ background: rgba(127,127,127,0.08); }}
 
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit {{
   background: rgba(255,255,255,0.04);
   border: 1px solid {p['BORDER']};
   border-radius: 10px;
   padding: 8px 10px;
+  color: {p['TEXT']};
 }}
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus {{
   border-color: {p['FOCUS']};
+  background: rgba(76,125,255,0.04);
 }}
 
 /* QComboBox açılır menü (popup) */
@@ -114,6 +116,18 @@ QTableView {{
   alternate-background-color: rgba(255,255,255,0.04);
 }}
 QTableView::item {{ background: transparent; }}
+
+QTableWidget {{
+  gridline-color: {p['BORDER']};
+  selection-background-color: {p['PRIMARY']};
+  selection-color: {"white" if p['TEXT'] != "#1B2430" else "#ffffff"};
+  background: transparent;
+  border: 1px solid {p['BORDER']};
+  border-radius: 14px;
+  alternate-background-color: rgba(255,255,255,0.04);
+}}
+QTableWidget::item {{ background: transparent; }}
+QTableWidget::item:selected {{ background-color: {p['PRIMARY']}; }}
 
 /* Cam kart */
 QFrame#Glass {{
@@ -288,6 +302,26 @@ def apply_dialog_theme(dialog, scheme: str = "dim"):
             background: transparent;
             border: none;
             width: 20px;
+        }}
+
+        /* QDateEdit takvim popup'u */
+        QCalendarWidget {{
+            background: {p['SURFACE']};
+            color: {p['TEXT']};
+            border: 1px solid {p['BORDER']};
+            border-radius: 8px;
+        }}
+
+        QCalendarWidget QToolButton {{
+            color: {p['TEXT']};
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+            padding: 4px;
+        }}
+
+        QCalendarWidget QToolButton:hover {{
+            background: rgba(76,125,255,0.1);
         }}
 
         /* QComboBox açılır menüsü */
@@ -474,3 +508,34 @@ class EmptyStateWidget(QWidget):
         layout.addWidget(self.icon_label)
         layout.addWidget(self.message_label)
         layout.addStretch()
+
+# theme.py
+from PyQt6.QtWidgets import QPushButton
+
+def style_button(btn: QPushButton, variant: str = "neutral"):
+    palette = {
+        "success": ("#2e7d32", "#43a047", "#FFFFFF"),
+        "danger":  ("#c62828", "#ef5350", "#FFFFFF"),
+        "warning": ("#ffb300", "#ffa000", "#0b0f16"),
+        "neutral": ("rgba(255,255,255,0.06)", "rgba(255,255,255,0.12)", "#E9EDF2"),
+    }
+    bg, border, fg = palette.get(variant, palette["neutral"])
+    # Hover renklerini hesapla (basit tonlama)
+    hover_bg = bg
+    if variant == "success":
+        hover_bg = "#388e3c"  # daha koyu yeşil
+    elif variant == "danger":
+        hover_bg = "#d32f2f"  # daha koyu kırmızı
+    elif variant == "warning":
+        hover_bg = "#ffca28"  # daha açık sarı
+
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            padding: 10px; border-radius: 10px;
+            background: {bg}; color: {fg};
+            border: 1px solid {border}; font-weight: 600;
+        }}
+        QPushButton:hover {{
+            background: {hover_bg};
+        }}
+    """)

@@ -15,6 +15,8 @@ from pages.stock import StockPage
 from pages.customers import CustomersPage
 from pages.sales import SalesPage
 from pages.finance import FinancePage
+from pages.reports import ReportsPage
+from pages.parameters import ParametersPage
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -52,7 +54,7 @@ class MainWindow(QMainWindow):
 
         # Sayfa yığını
         self.stack = QStackedWidget()
-        self.page_index = {"login": 0, "dashboard": 1, "stock": 2, "customers": 3, "sales": 4, "finance": 5}
+        self.page_index = {"login": 0, "dashboard": 1, "stock": 2, "customers": 3, "sales": 4, "finance": 5, "reports": 6, "parameters": 7}
 
         # Sayfalar
         self.login = LoginPage()
@@ -61,13 +63,17 @@ class MainWindow(QMainWindow):
         self.customers = CustomersPage()
         self.sales = SalesPage()
         self.finance = FinancePage()
+        self.reports = ReportsPage()
+        self.parameters = ParametersPage()
 
-        self.stack.addWidget(self.login)     # 0
-        self.stack.addWidget(self.dashboard) # 1
-        self.stack.addWidget(self.stock)     # 2
-        self.stack.addWidget(self.customers) # 3
-        self.stack.addWidget(self.sales)     # 4
-        self.stack.addWidget(self.finance)   # 5
+        self.stack.addWidget(self.login)      # 0
+        self.stack.addWidget(self.dashboard)  # 1
+        self.stack.addWidget(self.stock)      # 2
+        self.stack.addWidget(self.customers)  # 3
+        self.stack.addWidget(self.sales)      # 4
+        self.stack.addWidget(self.finance)    # 5
+        self.stack.addWidget(self.reports)    # 6
+        self.stack.addWidget(self.parameters) # 7
 
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)

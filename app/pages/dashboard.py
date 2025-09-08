@@ -155,7 +155,7 @@ class DashboardPage(QWidget):
         btn_new_sale.clicked.connect(lambda: self.quick_action_triggered.emit({'route': 'sales', 'action': 'new'}))
         btn_new_customer.clicked.connect(lambda: self.quick_action_triggered.emit({'route': 'customers', 'action': 'new'}))
         btn_new_stock.clicked.connect(lambda: self.quick_action_triggered.emit({'route': 'stock', 'action': 'new'}))
-        btn_reports.clicked.connect(lambda: self.quick_action_triggered.emit({'route': 'finance', 'action': 'new'}))
+        btn_reports.clicked.connect(lambda: self.quick_action_triggered.emit({'route': 'reports', 'action': 'view'}))
 
         # Buton stilleri
         button_style = """

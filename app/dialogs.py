@@ -520,3 +520,196 @@ class NewSaleItemDialog(QDialog):
             "BirimFiyat": float(self.in_price.value()),
             "Not": self.in_note.text().strip(),
         }
+
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QTextEdit,
+    QDateEdit, QDoubleSpinBox, QComboBox, QPushButton, QLabel, QFrame,
+    QFileDialog
+)
+from PyQt6.QtCore import Qt, QDate, QLocale, QSettings
+from PyQt6.QtGui import QFont, QTextDocument
+from PyQt6.QtPrintSupport import QPrinter
+
+
+TR = QLocale(QLocale.Language.Turkish, QLocale.Country.Turkey)
+
+class ExpenseVoucherDialog(QDialog):
+    """
+    DOS'taki Gider Pusulası alanlarının modern karşılığı:
+    İşlem No, İşlem Tarihi, Cari No, Cari Adı, İşin Maliyeti, Cinsi,
+    Adet, Birim Fiyat, Tutar (+ Not). PDF çıktısı üretir.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Gider Pusulası")
+        self.setModal(True)
+        self.setMinimumWidth(820)
+
+        # Tema (varsa uygula)
+        try:
+            from theme import apply_dialog_theme
+            apply_dialog_theme(self)
+        except Exception:
+            pass
+
+        root = QVBoxLayout(self); root.setContentsMargins(14,14,14,14); root.setSpacing(10)
+
+        title = QLabel("Gider Pusulası")
+        f = QFont("Segoe UI", 16); f.setWeight(QFont.Weight.DemiBold)
+        title.setFont(f)
+        root.addWidget(title)
+
+        row = QHBoxLayout(); row.setSpacing(12); root.addLayout(row)
+
+        # Sol kart: belge + cari
+        left = QFrame(objectName="Card"); left.setContentsMargins(12,12,12,12)
+        lf = QFormLayout(left); lf.setSpacing(8)
+
+        self.ed_doc  = QLineEdit(self._suggest_docno())      # İşlem No
+        self.ed_date = QDateEdit(calendarPopup=True)         # İşlem Tarihi
+        self.ed_date.setDate(QDate.currentDate())
+        self.ed_cari_no  = QLineEdit()                       # Cari No
+        self.ed_cari_adi = QLineEdit()                       # Cari Adı
+
+        lf.addRow("İşlem No", self.ed_doc)
+        lf.addRow("İşlem Tarihi", self.ed_date)
+        lf.addRow("Cari No", self.ed_cari_no)
+        lf.addRow("Cari Adı", self.ed_cari_adi)
+
+        row.addWidget(left, 1)
+
+        # Sağ kart: mahiyet + kalem
+        right = QFrame(objectName="Card"); right.setContentsMargins(12,12,12,12)
+        rf = QFormLayout(right); rf.setSpacing(8)
+
+        self.ed_mahi = QLineEdit()                           # İşin Mahiyeti
+        self.cmb_cins = QComboBox(); self.cmb_cins.setEditable(True)
+        self.cmb_cins.addItems(["", "Bilezik 22K", "Külçe 24K", "Çeyrek", "Gümüş", "Aksesuar"])
+
+        self.sp_adet = QDoubleSpinBox(); self.sp_adet.setRange(0, 1_000_000); self.sp_adet.setDecimals(3)
+        self.sp_birim = QDoubleSpinBox(); self.sp_birim.setRange(0, 1_000_000); self.sp_birim.setDecimals(2); self.sp_birim.setSuffix(" ₺")
+        self.ed_tutar = QLineEdit(); self.ed_tutar.setReadOnly(True)          # Tutar = adet*birim (otomatik)
+
+        rf.addRow("İşin Mahiyeti", self.ed_mahi)
+        rf.addRow("Cinsi", self.cmb_cins)
+        rf.addRow("Adet", self.sp_adet)
+        rf.addRow("Birim Fiyat", self.sp_birim)
+        rf.addRow("Tutar", self.ed_tutar)
+
+        row.addWidget(right, 1)
+
+        # Not + butonlar
+        bottom = QHBoxLayout(); bottom.setSpacing(12); root.addLayout(bottom)
+
+        note_card = QFrame(objectName="Card"); note_card.setContentsMargins(12,12,12,12)
+        self.ed_note = QTextEdit(); self.ed_note.setPlaceholderText("Not...")
+        nv = QVBoxLayout(note_card); nv.setContentsMargins(0,0,0,0); nv.addWidget(self.ed_note)
+        bottom.addWidget(note_card, 1)
+
+        btns = QFrame(objectName="Card"); btns.setContentsMargins(12,12,12,12)
+        bl = QVBoxLayout(btns); bl.setSpacing(8)
+        self.btn_pdf = QPushButton("PDF Yazdır")
+        self.btn_ok  = QPushButton("Kaydet ve Kapat")
+        self.btn_cancel = QPushButton("Vazgeç")
+        bl.addWidget(self.btn_pdf); bl.addWidget(self.btn_ok); bl.addWidget(self.btn_cancel)
+        bottom.addWidget(btns)
+
+        # Hesaplamalar
+        self.sp_adet.valueChanged.connect(self._recalc)
+        self.sp_birim.valueChanged.connect(self._recalc)
+        self._recalc()
+
+        # Sinyaller
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok.clicked.connect(self._accept_and_inc_seq)
+        self.btn_pdf.clicked.connect(self._export_pdf)
+
+    # --- yardımcılar ---
+    def _settings(self) -> QSettings:
+        return QSettings("OrbitX","KuyumcuERP")
+
+    def _suggest_docno(self) -> str:
+        s = self._settings()
+        yyyymm = QDate.currentDate().toString("yyMM")
+        n = int(s.value(f"expense/seq/{yyyymm}", 0))
+        return f"GDR-{yyyymm}-{n+1:04d}"
+
+    def _inc_seq(self):
+        s = self._settings()
+        yyyymm = QDate.currentDate().toString("yyMM")
+        n = int(s.value(f"expense/seq/{yyyymm}", 0)) + 1
+        s.setValue(f"expense/seq/{yyyymm}", n)
+
+    def _recalc(self):
+        tutar = float(self.sp_adet.value()) * float(self.sp_birim.value())
+        self.ed_tutar.setText(TR.toString(tutar, 'f', 2))
+
+    def _accept_and_inc_seq(self):
+        self._inc_seq()
+        self.accept()
+
+    # --- PDF ---
+    def _export_pdf(self):
+        path, _ = QFileDialog.getSaveFileName(self, "PDF olarak kaydet", "gider_pusulasi.pdf", "PDF (*.pdf)")
+        if not path: return
+
+        s = self._settings()
+        company = s.value("company/name", "Şirket Adı")
+        addr    = s.value("company/address","")
+        phone   = s.value("company/phone","")
+        taxno   = s.value("company/taxno","")
+
+        html = f"""
+        <style>
+            body {{ font-family: -apple-system, Segoe UI, Roboto, Arial; font-size: 11pt; }}
+            table {{ border-collapse: collapse; width: 100%; }}
+            th, td {{ border:1px solid #999; padding:6px; text-align:left; }}
+            .r {{ text-align:right; }}
+        </style>
+
+        <h2 style="margin:0 0 6px 0;">{company}</h2>
+        <div style="margin-bottom:10px;">{addr} &nbsp;&nbsp; {phone} &nbsp;&nbsp; VKN/TCKN: {taxno}</div>
+
+        <h3 style="margin:12px 0 6px 0;">Gider Pusulası</h3>
+        <table>
+            <tr><td><b>İşlem No</b></td><td>{self.ed_doc.text()}</td>
+                <td><b>İşlem Tarihi</b></td><td>{self.ed_date.date().toString('dd.MM.yyyy')}</td></tr>
+            <tr><td><b>Cari No</b></td><td>{self.ed_cari_no.text()}</td>
+                <td><b>Cari Adı</b></td><td>{self.ed_cari_adi.text()}</td></tr>
+            <tr><td><b>İşin Mahiyeti</b></td><td>{self.ed_mahi.text()}</td>
+                <td><b>Cinsi</b></td><td>{self.cmb_cins.currentText()}</td></tr>
+        </table>
+
+        <table style="margin-top:8px;">
+            <thead><tr><th>Adet</th><th>Birim Fiyat</th><th class="r">Tutar</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td>{TR.toString(self.sp_adet.value(),'f',3)}</td>
+                    <td>{TR.toString(self.sp_birim.value(),'f',2)}</td>
+                    <td class="r"><b>{self.ed_tutar.text()}</b></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div style="margin-top:12px;"><b>Not:</b> {self.ed_note.toPlainText()}</div>
+        """
+
+        doc = QTextDocument(); doc.setHtml(html)
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(path)
+        doc.print(printer)
+
+    def data(self) -> dict:
+        return {
+            "doc_no": self.ed_doc.text(),
+            "date": self.ed_date.date().toString("dd.MM.yyyy"),
+            "cari_no": self.ed_cari_no.text().strip(),
+            "cari_ad": self.ed_cari_adi.text().strip(),
+            "mahi": self.ed_mahi.text().strip(),
+            "cins": self.cmb_cins.currentText().strip(),
+            "adet": float(self.sp_adet.value()),
+            "birim": float(self.sp_birim.value()),
+            "tutar": float(self.sp_adet.value() * self.sp_birim.value()),
+            "note": self.ed_note.toPlainText().strip(),
+        }

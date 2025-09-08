@@ -103,7 +103,9 @@ class Sidebar(QWidget):
             ("stock", "Stok Yönetimi", "Ürün ve envanter"),
             ("customers", "Cari Hesap", "Müşteri yönetimi"),
             ("sales", "Alış–Satış", "İşlemler ve makbuz"),
-            ("finance", "Kasa & Finans", "Kasa defteri ve banka")
+            ("finance", "Kasa & Finans", "Kasa defteri ve banka"),
+            ("reports", "Raporlar", "Alım/Satım raporları"),
+            ("parameters", "Parametreler", "Sistem ayarları")
         ]
 
         for key, text, tooltip in nav_items:
