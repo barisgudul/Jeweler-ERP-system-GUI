@@ -214,8 +214,8 @@ class NewCustomerDialog(QDialog):
         self.in_tel = QLineEdit()
         self.in_tel.setPlaceholderText("05xx xxx xx xx")
 
-        # Telefon numarası için regex validator
-        phone_regex = QRegularExpression(r"^05\d{2} \d{3} \d{2} \d{2}$")
+        # Telefon numarası için daha esnek regex validator (sayılar ve boşluklar)
+        phone_regex = QRegularExpression(r"^[0-9\s]{0,15}$")
         phone_validator = QRegularExpressionValidator(phone_regex)
         self.in_tel.setValidator(phone_validator)
 
