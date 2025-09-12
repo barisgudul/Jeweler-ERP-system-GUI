@@ -4,10 +4,83 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QDateEdit,
     QPushButton, QFrame, QTableWidget, QTableWidgetItem, QAbstractItemView,
     QHeaderView, QSplitter, QSpinBox, QDoubleSpinBox, QMessageBox, QGroupBox,
-    QFormLayout, QStyledItemDelegate, QStyleOptionViewItem
+    QFormLayout, QStyledItemDelegate, QStyleOptionViewItem, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QDate, QLocale, QTimer
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QLinearGradient, QColor, QPalette
+
+# PDF oluşturma için gerekli import'lar
+try:
+    from reportlab.lib.pagesizes import A5
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm, mm
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.fonts import addMapping
+    import os
+
+    # Unicode fontları kaydet (Türkçe karakterler için)
+    FONT_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "fonts")
+
+    # Font dosyaları var mı kontrol et (birden fazla seçenek)
+    FONTS_AVAILABLE = False
+
+    # 1. Önce DejaVu fontlarını dene
+    dejavu_font = os.path.join(FONT_DIR, "DejaVuSans.ttf")
+    dejavu_bold_font = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf")
+
+    if os.path.exists(dejavu_font) and os.path.exists(dejavu_bold_font):
+        try:
+            pdfmetrics.registerFont(TTFont("DejaVu", dejavu_font))
+            pdfmetrics.registerFont(TTFont("DejaVu-Bold", dejavu_bold_font))
+            addMapping("DejaVu", 0, 0, "DejaVu")
+            addMapping("DejaVu", 0, 1, "DejaVu")
+            addMapping("DejaVu", 1, 0, "DejaVu-Bold")
+            addMapping("DejaVu", 1, 1, "DejaVu-Bold")
+            FONTS_AVAILABLE = True
+            print("✓ DejaVu fontları yüklendi")
+        except Exception as e:
+            print(f"✗ DejaVu font yükleme hatası: {e}")
+
+    # 2. Alternatif: Sistem fontlarını dene (Windows için)
+    if not FONTS_AVAILABLE:
+        system_fonts = [
+            (r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\arialbd.ttf"),
+            (r"C:\Windows\Fonts\calibri.ttf", r"C:\Windows\Fonts\calibrib.ttf"),
+            (r"C:\Windows\Fonts\tahoma.ttf", r"C:\Windows\Fonts\tahomabd.ttf")
+        ]
+
+        for normal_path, bold_path in system_fonts:
+            if os.path.exists(normal_path):
+                try:
+                    pdfmetrics.registerFont(TTFont("SystemFont", normal_path))
+                    if os.path.exists(bold_path):
+                        pdfmetrics.registerFont(TTFont("SystemFont-Bold", bold_path))
+                    else:
+                        # Bold yoksa normal'i bold olarak kullan
+                        pdfmetrics.registerFont(TTFont("SystemFont-Bold", normal_path))
+
+                    addMapping("SystemFont", 0, 0, "SystemFont")
+                    addMapping("SystemFont", 0, 1, "SystemFont")
+                    addMapping("SystemFont", 1, 0, "SystemFont-Bold")
+                    addMapping("SystemFont", 1, 1, "SystemFont-Bold")
+                    FONTS_AVAILABLE = True
+                    print("✓ Sistem fontu yüklendi")
+                    break
+                except Exception as e:
+                    print(f"✗ Sistem font yükleme hatası: {e}")
+                    continue
+
+    # 3. Son çare: Unicode destekli basit font oluştur
+    if not FONTS_AVAILABLE:
+        print("⚠️ Özel font bulunamadı, varsayılan kullanılacak")
+
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+    FONTS_AVAILABLE = False
 from random import randint, choice
 from dialogs import NewSaleItemDialog, NewCustomerDialog
 from theme import elevate
@@ -77,7 +150,7 @@ class QtyDelegate(QStyledItemDelegate):
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox, QTableWidget,
     QTableWidgetItem, QPushButton, QFrame, QAbstractItemView, QHeaderView,
-    QSpinBox, QDoubleSpinBox, QLabel, QCheckBox
+    QSpinBox, QDoubleSpinBox, QLabel
 )
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QFont
@@ -140,7 +213,9 @@ class MultiProductPickerDialog(QDialog):
         cat_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #E9EDF2; padding: 4px 8px 4px 0px;")
         self.cmb_cat = QComboBox()
         self.cmb_cat.setMinimumHeight(36)
-        cats = ["Tümü"] + sorted({p["Kategori"] for p in products})
+        cats = ["Tümü"]
+        if products:
+            cats.extend(sorted({p["Kategori"] for p in products}))
         self.cmb_cat.addItems(cats)
         self.cmb_cat.setStyleSheet("""
             QComboBox {
@@ -175,10 +250,11 @@ class MultiProductPickerDialog(QDialog):
         v.addLayout(top)
 
         # — Tablo
-        self.tbl = QTableWidget(0, 8, self)
-        self.tbl.setHorizontalHeaderLabels(
-            ["Seç","Kod","Ürün","Kategori","Gram","Adet (tıkla)","Birim Fiyat","Stok"]
-        )
+        self.tbl = QTableWidget(0, 11, self)
+        self.tbl.setHorizontalHeaderLabels([
+            "Seç","Kod","Ürün","Kategori","Gram","Adet (tıkla)","Birim Fiyat","Stok",
+            "Milyem","İşçilik","Detay"
+        ])
         self.tbl.verticalHeader().setVisible(False)
         self.tbl.setCornerButtonEnabled(False)
         self.tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -237,8 +313,10 @@ class MultiProductPickerDialog(QDialog):
         # Ana sales tablosu ile aynı header stili
         hdr = self.tbl.horizontalHeader()
         hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+
+        # ÖNEMLİ: son sütunu esnetme, ürün adını esnet
         hdr.setStretchLastSection(False)
-        hdr.setMinimumSectionSize(80)  # genel alt sınır
+        hdr.setMinimumSectionSize(90)
         hdr.setDefaultSectionSize(120)
         hdr.setStyleSheet("""
             QHeaderView::section {
@@ -268,18 +346,29 @@ class MultiProductPickerDialog(QDialog):
             }
         """)
 
-        # Güncellenmiş kolon oranları (ürün daraltılıp diğerleri büyütüldü)
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed); self.tbl.setColumnWidth(0, 70)    # Seç
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed); self.tbl.setColumnWidth(1, 110)   # Kod +10
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)                                   # Ürün (daha dar kalacak)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed); self.tbl.setColumnWidth(3, 140)   # Kategori +20
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed); self.tbl.setColumnWidth(4, 90)    # Gram +10
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed); self.tbl.setColumnWidth(5, 110)   # Adet +20 (spinbox için ferah)
-        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed); self.tbl.setColumnWidth(6, 135)   # Birim +15
-        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed); self.tbl.setColumnWidth(7, 110)   # Stok +10
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(0, 70)     # Seç
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(1, 110)    # Kod
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)                                      # Ürün (esner)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(3, 140)    # Kategori
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(4, 90)     # Gram
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(5, 110)    # Adet
+        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(6, 135)    # Birim
+        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(7, 110)    # Stok
+        hdr.setSectionResizeMode(8, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(8, 90)     # Milyem (bir tık artırdım)
+        hdr.setSectionResizeMode(9, QHeaderView.ResizeMode.Fixed);   self.tbl.setColumnWidth(9, 120)    # İşçilik (bir tık artırdım)
+
+        # Detay sütunu sabit genişlikte olsun
+        hdr.setSectionResizeMode(10, QHeaderView.ResizeMode.Fixed)
+        self.tbl.setColumnWidth(10, 120)
 
         # Sabit satır yüksekliği - adet artınca hücre "şişmesin"
         self.tbl.verticalHeader().setDefaultSectionSize(42)
+
+        # Daha pürüzsüz yatay kaydırma için bonus
+        self.tbl.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+
+        # Küçük güvenlik payı - sağda 2px tampon
+        self.tbl.setViewportMargins(0, 0, 2, 0)
 
         v.addWidget(self.tbl, 1)
 
@@ -347,11 +436,14 @@ class MultiProductPickerDialog(QDialog):
         self.btn_cancel.clicked.connect(self.reject)
         self.btn_ok.clicked.connect(self.accept)
 
-        # Satır tıklama ile checkbox toggle
-        self.tbl.itemDoubleClicked.connect(self._on_item_double_clicked)
+        # Satır tıklama ile checkbox toggle - KALDIRILDI (Qt.ItemIsUserCheckable zaten çalışıyor)
+        # self.tbl.itemClicked.connect(self._on_item_clicked)
+        # self.tbl.itemDoubleClicked.connect(self._on_item_double_clicked)
 
         # Hover'da imleç değişimi için event filter
         self.tbl.viewport().installEventFilter(self)
+
+        self._extras_by_code: dict[str, dict] = {}  # { "STK0001": {"Milyem":"916","Iscilik":39.50,"Foto":"..."} }
 
         # Ana sales sayfası ile aynı tema
         try:
@@ -360,10 +452,13 @@ class MultiProductPickerDialog(QDialog):
         except Exception:
             pass
 
+    def _on_item_clicked(self, item):
+        """Artık kullanılmıyor - Qt.ItemIsUserCheckable çalışıyor"""
+        return
+
     def _on_item_double_clicked(self, item):
-        """Satırın checkbox'ını toggle eder"""
-        if item.column() == 0:  # Sadece checkbox sütunu için
-            self._toggle_row_check(item.row())
+        """Artık kullanılmıyor - Qt.ItemIsUserCheckable çalışıyor"""
+        return
 
     def eventFilter(self, obj, event):
         if obj is self.tbl.viewport() and event.type() == QEvent.Type.MouseMove:
@@ -447,6 +542,67 @@ class MultiProductPickerDialog(QDialog):
             it_s.setForeground(QColor(255,255,255))
         self.tbl.setItem(r, 7, it_s)
 
+        # --- Milyem (okunur) başlangıç boş
+        it_m = QTableWidgetItem("")        # gösterim
+        it_m.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.tbl.setItem(r, 8, it_m)
+
+        # --- İşçilik (₺, okunur)
+        it_i = QTableWidgetItem("")        # gösterim
+        it_i.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.tbl.setItem(r, 9, it_i)
+
+        # --- Detay butonu (tüm hücreyi kaplar)
+        cell = QWidget()
+        lay = QHBoxLayout(cell)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        btn = QPushButton("Detay")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        btn.setProperty("small", True)
+        btn.setStyleSheet("""
+            QPushButton {
+                /* hücreyi tam kapla */
+                margin: 0; padding: 0; border-radius: 0;
+                background: rgba(76,125,255,0.15);
+                border: 1px solid rgba(76,125,255,0.5);
+                color: #E9EDF2; font-weight: 700;
+            }
+            QPushButton:hover {
+                background: rgba(76,125,255,0.25);
+            }
+        """)
+
+        btn.clicked.connect(self._on_detail_clicked)
+        lay.addWidget(btn)
+        self.tbl.setCellWidget(r, 10, cell)
+
+    def _on_detail_clicked(self):
+        btn = self.sender()
+        if not btn:
+            return
+        # Buton, hücre içindeki QWidget'in (cell) içinde: parent() = cell
+        cell_widget = btn.parent()
+        idx = self.tbl.indexAt(cell_widget.pos())
+        row = idx.row()
+        if row < 0:
+            return
+
+        # Kodu tablodan al (tekil anahtar)
+        kod = self.tbl.item(row, 1).text()
+
+        initial = self._extras_by_code.get(kod, {})
+        d = ItemDetailDialog(self, initial)
+        if d.exec():
+            data = d.data()
+            self._extras_by_code[kod] = data
+            # Hücreleri güncelle
+            self.tbl.item(row, 8).setText(data.get("Milyem", ""))
+            isc = float(data.get("Iscilik", 0.0))
+            self.tbl.item(row, 9).setText(tl(isc))
+
     def data(self) -> list[dict]:
         """Seçili checkbox'lı satırları döndürür."""
         rows = []
@@ -458,12 +614,17 @@ class MultiProductPickerDialog(QDialog):
             # Adet değerini UserRole'dan al (spinbox doğrudan güncelliyor)
             adet = int(self.tbl.item(r, 5).data(Qt.ItemDataRole.UserRole) or 1)
 
+            kod = self.tbl.item(r, 1).text()
+            extra = self._extras_by_code.get(kod, {})
             rows.append({
-                "Kod":        self.tbl.item(r, 1).text(),
+                "Kod":        kod,
                 "Ad":         self.tbl.item(r, 2).text(),
                 "Gram":       float(self.tbl.item(r, 4).data(Qt.ItemDataRole.UserRole) or 0.0),
                 "Adet":       adet,
                 "BirimFiyat": float(self.tbl.item(r, 6).data(Qt.ItemDataRole.UserRole) or 0.0),
+                "Milyem":     extra.get("Milyem",""),
+                "Iscilik":    float(extra.get("Iscilik", 0.0)),
+                "Foto":       extra.get("Foto",""),
             })
         return rows
 
@@ -530,6 +691,80 @@ def tl(v: float) -> str:  # ₺ formatı
     try: return TR.toCurrencyString(v, "₺")
     except: return f"{v:,.2f} ₺"
 
+# === Tek ürün detay diyaloğu (Milyem / İşçilik / Foto) =======================
+from PyQt6.QtWidgets import QFileDialog, QTextEdit, QDialogButtonBox
+
+class ItemDetailDialog(QDialog):
+    def __init__(self, parent=None, initial: dict|None=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ürün Detayı")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+
+        v = QVBoxLayout(self); v.setContentsMargins(16,16,16,16); v.setSpacing(12)
+        card = QFrame(self); card.setObjectName("Glass")
+        body = QVBoxLayout(card); body.setContentsMargins(16,16,16,16); body.setSpacing(12)
+        v.addWidget(card)
+
+        title = QLabel("Milyem • İşçilik • Fotoğraf")
+        title.setProperty("variant","title")
+        body.addWidget(title)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setHorizontalSpacing(12); form.setVerticalSpacing(10)
+
+        self.cmb_milyem = QComboBox()
+        self.cmb_milyem.addItems(["916", "900", "875", "835", "750", "585", "375"])
+        self.sp_iscilik = QDoubleSpinBox(); self.sp_iscilik.setRange(0,1_000_000); self.sp_iscilik.setDecimals(2)
+        self.sp_iscilik.setSuffix(" ₺")
+
+        self.ed_foto = QLineEdit(); self.ed_foto.setReadOnly(True)
+        btn_foto = QPushButton("Seç…")
+        def pick():
+            p, _ = QFileDialog.getOpenFileName(self, "Ürün Fotoğrafı", "", "Görseller (*.png *.jpg *.jpeg *.webp)")
+            if p:
+                import os
+                if os.path.exists(p):
+                    self.ed_foto.setText(p)
+                else:
+                    QMessageBox.warning(self, "Dosya Bulunamadı",
+                        f"Seçilen dosya bulunamıyor:\n{p}\n\n"
+                        f"Lütfen geçerli bir dosya seçin.")
+        btn_foto.clicked.connect(pick)
+
+        row = QHBoxLayout(); row.addWidget(self.ed_foto,1); row.addWidget(btn_foto)
+
+        form.addRow("Milyem", self.cmb_milyem)
+        form.addRow("İşçilik", self.sp_iscilik)
+        form.addRow("Fotoğraf", row)
+        body.addLayout(form)
+
+        # Düzenleme
+        if initial:
+            if initial.get("Milyem"): self.cmb_milyem.setCurrentText(str(initial["Milyem"]))
+            try: self.sp_iscilik.setValue(float(initial.get("Iscilik",0.0)))
+            except: pass
+            self.ed_foto.setText(initial.get("Foto",""))
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept); btns.rejected.connect(self.reject)
+        body.addWidget(btns)
+
+        # tema
+        try:
+            from theme import apply_dialog_theme
+            apply_dialog_theme(self,"dim")
+        except Exception:
+            pass
+
+    def data(self):
+        return {
+            "Milyem": self.cmb_milyem.currentText(),
+            "Iscilik": float(self.sp_iscilik.value()),
+            "Foto": self.ed_foto.text().strip(),
+        }
+
 class SalesPage(QWidget):
     """Alış–Satış işlemleri (frontend/mock)"""
     def __init__(self, parent=None):
@@ -540,6 +775,11 @@ class SalesPage(QWidget):
         self._sky.lower()  # en arkada dursun
         self._sky.setScaledContents(True)
         self._sky.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+        # Performance için debounce timer
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(self._on_resize_timeout)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
@@ -562,8 +802,8 @@ class SalesPage(QWidget):
         form_card = QFrame(objectName="Glass")
         elevate(form_card, "dim", blur=20, y=6)
         form = QVBoxLayout(form_card)
-        form.setContentsMargins(16, 12, 16, 12)   # ↓
-        form.setSpacing(8)                        # ↓
+        form.setContentsMargins(12, 8, 12, 8)
+        form.setSpacing(6)
 
         form_title = QLabel("İşlem Bilgileri")
         form_title.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))  # ↓ boyut
@@ -611,7 +851,7 @@ class SalesPage(QWidget):
                                         "QComboBox::drop-down{border:none;width:16px;}"
                                         "QComboBox QAbstractItemView{background:rgba(28,34,44,0.98);color:#E9EDF2;border:1px solid rgba(255,255,255,0.08);selection-background-color:#4C7DFF;padding:4px;}")
         btn_new_cari = QPushButton("+ Yeni")
-        btn_new_cari.setFixedWidth(72)
+        btn_new_cari.setFixedWidth(64)
         btn_new_cari.setStyleSheet("""
             QPushButton { padding: 6px 10px; border-radius: 8px;
             background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); }
@@ -737,28 +977,34 @@ class SalesPage(QWidget):
         # — içerik: sol satırlar / sağ özet
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
-        splitter.setHandleWidth(8)
+        splitter.setHandleWidth(5)
 
         # Sol: tablo kartı
         table_card = QFrame(objectName="Glass")
         elevate(table_card, "dim", blur=28, y=8)
         tlayout = QVBoxLayout(table_card)
-        tlayout.setContentsMargins(16, 16, 16, 16)
-        tlayout.setSpacing(8)
+        tlayout.setContentsMargins(10, 10, 10, 10)
+        tlayout.setSpacing(6)
 
         lbl_items = QLabel("İşlem Satırları")
         lbl_items.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         lbl_items.setStyleSheet("color: #E9EDF2; margin-bottom: 4px;")
         tlayout.addWidget(lbl_items)
 
-        self.table = QTableWidget(0, 6, self)
-        self.table.setHorizontalHeaderLabels(["Kod","Ürün","Gram","Adet","Birim Fiyat","Tutar"])
+        self.table = QTableWidget(0, 8, self)
+        self.table.setHorizontalHeaderLabels(["Kod","Ürün","Gram","Adet","Milyem","İşçilik (Toplam)","Birim Fiyat","Tutar"])
         self.table.verticalHeader().setVisible(False)
         self.table.setCornerButtonEnabled(False)
+
+        # satır yüksekliğini biraz artır (okunurluk) ama alanı iyi kullan
+        self.table.verticalHeader().setDefaultSectionSize(44)   # 42→44
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.itemSelectionChanged.connect(self._toggle_actions)
+        # Tablo değişikliklerinde save button durumunu güncelle
+        self.table.model().rowsInserted.connect(lambda: self._update_save_button_state())
+        self.table.model().rowsRemoved.connect(lambda: self._update_save_button_state())
 
         # Tablo stilleri - Daha belirgin ve büyük
         self.table.setStyleSheet("""
@@ -806,7 +1052,7 @@ class SalesPage(QWidget):
         hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         hdr.setStretchLastSection(False)
         hdr.setMinimumSectionSize(60)
-        hdr.setDefaultSectionSize(120)
+        hdr.setDefaultSectionSize(110)                           # 120→110
         hdr.setStyleSheet("""
             QHeaderView::section {
                 background: rgba(20,26,48,0.95);
@@ -843,10 +1089,12 @@ class SalesPage(QWidget):
         self.table.setColumnWidth(2, 80)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(3, 70)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(4, 110)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, 110)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed); self.table.setColumnWidth(4, 70)   # Milyem
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed); self.table.setColumnWidth(5, 110)  # İşçilik
+        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(6, 110)
+        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(7, 110)
 
         tlayout.addWidget(self.table)
 
@@ -856,234 +1104,236 @@ class SalesPage(QWidget):
         # Sağ: özet panel - YENİDEN TASARLANDI
         right = QFrame(objectName="Glass")
         elevate(right, "dim", blur=28, y=8)
-        r_layout = QVBoxLayout(right)
-        r_layout.setContentsMargins(16, 16, 16, 16)
-        r_layout.setSpacing(16)
 
-        # --- 1. İşlem Özeti Grubu — GRID yerleşim ---
+        # Eskisi: QVBoxLayout
+        # r_layout = QVBoxLayout(right)
+        # r_layout.setContentsMargins(16, 16, 16, 16)
+        # r_layout.setSpacing(16)
+
+        # YENİ: tek sütunlu grid
+        from PyQt6.QtWidgets import QGridLayout
+        r_grid = QGridLayout(right)
+        r_grid.setContentsMargins(12, 12, 12, 12)
+        r_grid.setHorizontalSpacing(12)
+        r_grid.setVerticalSpacing(12)
+
+        # Fiyatlandırma paneli yok: varsayılan parametreler
+        self._base_price = 3500.0   # 24K baz
+        self._markup     = 0.0      # %
+        self._round_step = 10.0     # ₺
+
+        # --- 1. İşlem Özeti (responsive grid, indirim yok) ---
         summary_group = QGroupBox("İşlem Özeti")
         summary_group.setStyleSheet("""
             QGroupBox {
                 font-size: 13px; font-weight: 600; color: #E9EDF2;
                 border: 1px solid rgba(255,255,255,0.10);
                 border-radius: 12px;
-                padding: 10px 12px 12px 12px;
+                padding: 8px 10px 10px 10px;
                 margin-top: 0px;
                 background: rgba(255,255,255,0.03);
             }
             QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 2px 6px; }
-            QLabel[data='label'] { color: #B7C0CC; font-weight: 600; }
-            QLabel#miniPill {
+            QLabel[data='label'] { color: #B7C0CC; font-weight: 600; font-size: 12px; }
+            QLabel#pill {
                 padding: 6px 10px; border-radius: 10px;
                 border: 1px solid rgba(255,255,255,0.10);
-                background: rgba(255,255,255,0.04);
-                color: #E9EDF2; font-weight: 700; min-height: 28px;
+                background: rgba(255,255,255,0.05);
+                color: #E9EDF2; font-weight: 700; min-height: 26px;
+                qproperty-alignment: 'AlignCenter';
+                font-size: 12px;
             }
-            QLabel#totalPill {
-                padding: 10px 14px; border-radius: 12px;
+            QLabel#total {
+                padding: 8px 12px; border-radius: 12px;
                 border: 1px solid rgba(76,125,255,0.35);
                 background: rgba(76,125,255,0.12);
-                color: #E9EDF2; font-weight: 800; min-height: 40px;
+                color: #E9EDF2; font-weight: 800; min-height: 34px; font-size: 13px;
+                qproperty-alignment: 'AlignCenter';
             }
         """)
 
         from PyQt6.QtWidgets import QGridLayout
-        summary_grid = QGridLayout(summary_group)
-        summary_grid.setContentsMargins(6, 6, 6, 6)
-        summary_grid.setHorizontalSpacing(14)
-        summary_grid.setVerticalSpacing(10)
+        self._summary_grid = QGridLayout(summary_group)
+        self._summary_grid.setContentsMargins(6, 6, 6, 6)
+        self._summary_grid.setHorizontalSpacing(8)
+        self._summary_grid.setVerticalSpacing(6)
 
-        # Etiketler
-        lbl1 = QLabel("Ürün Sayısı:"); lbl1.setProperty("data","label")
-        lbl2 = QLabel("Ara Toplam:");  lbl2.setProperty("data","label")
-        lbl3 = QLabel("İndirim:");     lbl3.setProperty("data","label")
-        lbl4 = QLabel("Genel Toplam:");lbl4.setProperty("data","label")
+        # Etiket + değer kutuları (İNDİRİM YOK)
+        lbl_items   = QLabel("Ürün");         lbl_items.setProperty("data","label")
+        lbl_sub     = QLabel("Ara Top.");     lbl_sub.setProperty("data","label")
+        lbl_grand   = QLabel("Genel Toplam"); lbl_grand.setProperty("data","label")
 
-        # Değer pill'leri
-        self.lbl_sum_count = QLabel("0");          self.lbl_sum_count.setObjectName("miniPill")
-        self.lbl_sum_sub   = QLabel(tl(0));        self.lbl_sum_sub.setObjectName("miniPill")
-        self.lbl_sum_disc  = QLabel(tl(0));        self.lbl_sum_disc.setObjectName("miniPill")
-        self.lbl_sum_total = QLabel(tl(0));        self.lbl_sum_total.setObjectName("totalPill")
+        self.lbl_sum_count = QLabel("0");   self.lbl_sum_count.setObjectName("pill")
+        self.lbl_sum_sub   = QLabel(tl(0)); self.lbl_sum_sub.setObjectName("pill")
+        self.lbl_sum_total = QLabel(tl(0)); self.lbl_sum_total.setObjectName("total")
 
-        for w in (self.lbl_sum_count, self.lbl_sum_sub, self.lbl_sum_disc, self.lbl_sum_total):
-            w.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Responsive yerleşim için bir liste tutalım (etiket, değer) çiftleri
+        self._summary_pairs = [
+            (lbl_items, self.lbl_sum_count),
+            (lbl_sub,   self.lbl_sum_sub),
+            (lbl_grand, self.lbl_sum_total),
+        ]
 
-        # 4 sütunlu grid: [label, pill, label, pill]
-        summary_grid.addWidget(lbl1,               0, 0)
-        summary_grid.addWidget(self.lbl_sum_count, 0, 1)
-        summary_grid.addWidget(lbl2,               0, 2)
-        summary_grid.addWidget(self.lbl_sum_sub,   0, 3)
+        # DİKEL 3 satır: her satır "etiket | değer"
+        self._apply_summary_layout(self._summary_grid, max_cols=1)
 
-        summary_grid.addWidget(lbl3,               1, 0)
-        summary_grid.addWidget(self.lbl_sum_disc,  1, 1)
+        r_grid.addWidget(summary_group, 0, 0)
 
-        # Alt sıra: büyük toplam — etiketi solda, pill sağda 3 sütunu kaplar
-        summary_grid.addWidget(lbl4,               2, 0)
-        summary_grid.addWidget(self.lbl_sum_total, 2, 1, 1, 3)
-
-        # Esnek oranlar
-        summary_grid.setColumnStretch(0, 0)
-        summary_grid.setColumnStretch(1, 1)
-        summary_grid.setColumnStretch(2, 0)
-        summary_grid.setColumnStretch(3, 1)
-
-        r_layout.addWidget(summary_group)
-
-        # --- 2. Ödeme Bilgileri Grubu — 2x2 net grid ---
+        # --- 2. Ödeme Bilgileri Grubu — net 2x2 grid
         payment_group = QGroupBox("Ödeme Bilgileri")
         payment_group.setStyleSheet("""
             QGroupBox {
                 font-size: 13px; font-weight: 600; color: #E9EDF2;
                 border: 1px solid rgba(255,255,255,0.10);
                 border-radius: 12px;
-                padding: 10px 12px 12px 12px;
+                padding: 8px 10px 10px 10px;   /* daha dar */
                 margin-top: 8px;
                 background: rgba(255,255,255,0.03);
             }
-            QGroupBox::title {
-                subcontrol-origin: margin; left: 12px; padding: 2px 6px;
-            }
+            QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 2px 6px; }
         """)
 
-        CTRL_H = 40  # tüm input/pill yükseklik standardı
+        # daha kısa kontrol yüksekliği
+        CTRL_H = 40
 
-        from PyQt6.QtWidgets import QGridLayout, QSizePolicy
+        from PyQt6.QtWidgets import QSizePolicy
+        payment_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        payment_group.setMaximumHeight(170)   # 150–180 arası deneyebilirsin
+
+        from PyQt6.QtWidgets import QGridLayout
         grid = QGridLayout(payment_group)
-        grid.setContentsMargins(6, 6, 6, 6)
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(14)
+        grid.setContentsMargins(8, 8, 8, 8)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
 
-        # — SOL ÜST: Ödeme Türü
+        common_pay_css = """
+            padding: 8px 10px; border-radius: 10px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.12);
+            color: #E9EDF2; font-size: 13px;
+        """
+
+        # Sol-üst: Ödeme türü
         self.cmb_pay = QComboBox()
-        self.cmb_pay.addItems(["Nakit", "Kart", "Havale", "Veresiye"])
+        self.cmb_pay.addItems(["Nakit","Kart","Havale","Veresiye"])
         self.cmb_pay.setCurrentIndex(0)
-        self.cmb_pay.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.cmb_pay.setFixedHeight(CTRL_H)
-        self.cmb_pay.setStyleSheet("""
-            QComboBox {
-                padding: 8px 10px; border-radius: 10px;
-                background: rgba(255,255,255,0.06);
-                border: 1px solid rgba(255,255,255,0.12);
-                color: #E9EDF2; font-size: 13px;
-            }
-            QComboBox::drop-down { border: none; width: 16px; }
-            QComboBox QAbstractItemView {
-                background: rgba(28,34,44,0.98); color: #E9EDF2;
+        self.cmb_pay.setStyleSheet(f"""
+            QComboBox {{ {common_pay_css} }}
+            QComboBox::drop-down {{ border:none; width:16px; }}
+            QComboBox QAbstractItemView {{
+                background: rgba(28,34,44,0.98); color:#E9EDF2;
                 border: 1px solid rgba(255,255,255,0.08);
-                selection-background-color: #4C7DFF; padding: 4px;
-            }
+                selection-background-color:#4C7DFF; padding:6px; font-size:13px;
+            }}
         """)
 
-        # — SAĞ ÜST: Büyük Toplam "pill"
+        # Sağ-üst: Alınan tutar
+        self.in_paid = QDoubleSpinBox()
+        self.in_paid.setRange(0, 1_000_000); self.in_paid.setDecimals(2)
+        self.in_paid.setPrefix("₺ "); self.in_paid.setGroupSeparatorShown(True)
+        self.in_paid.setLocale(TR); self.in_paid.setButtonSymbols(self.in_paid.ButtonSymbols.NoButtons)
+        self.in_paid.setFixedHeight(CTRL_H)
+        self.in_paid.setStyleSheet(f"QDoubleSpinBox {{ {common_pay_css} }} QDoubleSpinBox:focus {{ border-color:#4C7DFF; background: rgba(76,125,255,0.08); }}")
+
+        # Sol-alt: Büyük toplam (küçük font, kompakt)
         self._total_big = QLabel("Genel Toplam: 0 ₺")
         self._total_big.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._total_big.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._total_big.setFixedHeight(CTRL_H)
-        self._total_big.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self._total_big.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))  # 15 → 14
         self._total_big.setStyleSheet("""
             QLabel {
-                color: #E9EDF2; padding: 8px 10px; border-radius: 10px;
-                border: 1px solid rgba(255,255,255,0.10);
-                background: rgba(255,255,255,0.04);
-                font-weight: 700;
-            }
-        """)
-
-        # — SOL ALT: Alınan Tutar
-        self.in_paid = QDoubleSpinBox()
-        self.in_paid.setRange(0, 1_000_000)
-        self.in_paid.setDecimals(2)
-        self.in_paid.setPrefix("₺ ")
-        self.in_paid.setGroupSeparatorShown(True)
-        self.in_paid.setLocale(TR)
-        self.in_paid.setButtonSymbols(self.in_paid.ButtonSymbols.NoButtons)
-        self.in_paid.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.in_paid.setFixedHeight(CTRL_H)
-        self.in_paid.setStyleSheet("""
-            QDoubleSpinBox {
-                padding: 8px 10px; border-radius: 10px;
+                color:#E9EDF2; padding:8px 12px;
+                border-radius:10px;
+                border:1px solid rgba(255,255,255,0.12);
                 background: rgba(255,255,255,0.06);
-                border: 1px solid rgba(255,255,255,0.12);
-                color: #E9EDF2; font-size: 13px;
-            }
-            QDoubleSpinBox:focus {
-                border-color: #4C7DFF; background: rgba(76,125,255,0.08);
+                font-weight:800;
             }
         """)
 
-        # — SAĞ ALT: Para Üstü / Kalan "pill"
+        # Sağ-alt: Para üstü / kalan
         self.lbl_change = QLabel("Para Üstü: 0 ₺")
         self.lbl_change.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_change.setFixedHeight(CTRL_H)
-        self.lbl_change.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.lbl_change.setStyleSheet("""
             QLabel {
-                color: #2ECC71; font-weight: 600; padding: 8px 10px;
-                border-radius: 10px; background: rgba(46,204,113,0.10);
-                border: 1px solid rgba(46,204,113,0.25);
+                color:#2ECC71; font-weight:700; font-size:13px;
+                padding:8px 12px; border-radius:10px;
+                background: rgba(46,204,113,0.12);
+                border: 1px solid rgba(46,204,113,0.28);
             }
         """)
-
         self.lbl_remaining = QLabel("Kalan (Veresiye): 0 ₺")
         self.lbl_remaining.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_remaining.setFixedHeight(CTRL_H)
-        self.lbl_remaining.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.lbl_remaining.setVisible(False)
         self.lbl_remaining.setStyleSheet("""
             QLabel {
-                color: #FF6B6B; font-weight: 600; padding: 8px 10px;
-                border-radius: 10px; background: rgba(255,107,107,0.10);
-                border: 1px solid rgba(255,107,107,0.25);
+                color:#FF6B6B; font-weight:700; font-size:13px;
+                padding:8px 12px; border-radius:10px;
+                background: rgba(255,107,107,0.12);
+                border: 1px solid rgba(255,107,107,0.28);
             }
         """)
-        self.lbl_remaining.setVisible(False)
 
-        # 2x2 yerleşim — artık hiçbir şey "üst üste" değil
-        grid.addWidget(self.cmb_pay,      0, 0)
-        grid.addWidget(self._total_big,   0, 1)
-        grid.addWidget(self.in_paid,      1, 0)
-        grid.addWidget(self.lbl_change,   1, 1)
+        # 2×2 yerleşim
+        grid.addWidget(self.cmb_pay,    0, 0)
+        grid.addWidget(self.in_paid,    0, 1)
+        grid.addWidget(self._total_big, 1, 0)
+        grid.addWidget(self.lbl_change, 1, 1)
+
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
 
         # satırlar arasında ince ayırıcı istersen:
         line = QFrame(); line.setFrameShape(QFrame.Shape.HLine)
         line.setStyleSheet("color: rgba(255,255,255,0.08);")
         # grid.addWidget(line, 2, 0, 1, 2)   # istersen aç
-        r_layout.addWidget(payment_group)
+        r_grid.addWidget(payment_group, 1, 0)
 
-        r_layout.addStretch(1)  # <<< EN ÖNEMLİ KISIM: Butonları en alta iter
-
-        # Ana aksiyon butonları - Daha büyük ve belirgin
+        # Ana aksiyon butonları – daha küçük
         self.btn_save  = QPushButton("İşlemi Kaydet")
         self.btn_print = QPushButton("Makbuz Yazdır")
 
-        # Büyük aksiyon butonları
-        for btn in [self.btn_save, self.btn_print]:
+        for btn in (self.btn_save, self.btn_print):
+            btn.setMinimumHeight(44)   # 48 → 44
+            btn.setMaximumHeight(44)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet("""
                 QPushButton {
-                    padding: 12px 18px;
+                    padding: 10px 16px;        /* ↑ */
                     border-radius: 12px;
-                    background: rgba(76,125,255,0.15);
-                    border: 2px solid rgba(76,125,255,0.4);
+                    background: rgba(76,125,255,0.14);
+                    border: 1px solid rgba(76,125,255,0.38);
                     color: #E9EDF2;
-                    font-size: 14px;
-                    font-weight: 600;
+                    font-size: 14px; font-weight: 700;            /* ↑ */
                 }
-                QPushButton:hover {
-                    border-color: #97B7FF;
-                    background: rgba(76,125,255,0.25);
-                    color: #F1F4F8;
-                }
-                QPushButton:pressed {
-                    background: rgba(76,125,255,0.35);
-                }
+                QPushButton:hover { border-color:#97B7FF; background: rgba(76,125,255,0.22); }
+                QPushButton:pressed { background: rgba(76,125,255,0.30); }
             """)
 
-        r_layout.addWidget(self.btn_save)
-        r_layout.addWidget(self.btn_print)
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(10)
+        actions_row.addWidget(self.btn_save)
+        actions_row.addWidget(self.btn_print)
 
-        right.setMinimumWidth(460)
-        right.setMaximumWidth(520)
+        actions_bar = QWidget()
+        actions_bar.setLayout(actions_row)
+        r_grid.addWidget(actions_bar, 2, 0)  # en alt sıra
+
+        # Gruplar dikeyde esnesin, buton sabit kalsın, boş satır olmasın
+        r_grid.setColumnStretch(0, 1)
+        r_grid.setRowStretch(0, 2)   # Özet daha çok yer kaplasın
+        r_grid.setRowStretch(1, 0)   # Ödeme sabit/kısa
+        r_grid.setRowStretch(2, 0)   # Buton sabit
+        # r_grid.setRowStretch(3, 1)  # ← KALDIR (boş satır istemiyoruz)
+
+        right.setMinimumWidth(360)
+        right.setMaximumWidth(420)   # sağ panel sabit dar
+
         splitter.addWidget(right)
-        splitter.setStretchFactor(1, 1)  # Sağ panel (index 1) 1 birim büyüme
+        splitter.setStretchFactor(0, 6)  # sol taraf ezici çoğunluk
+        splitter.setStretchFactor(1, 1)
 
         root.addWidget(splitter, 1)
 
@@ -1092,17 +1342,27 @@ class SalesPage(QWidget):
         self.btn_edit.clicked.connect(self.edit_item)
         self.btn_del.clicked.connect(self.remove_item)
         self.btn_save.clicked.connect(self.save_transaction)
+        self.btn_print.clicked.connect(self.generate_receipt_pdf)
+        self.btn_print.setToolTip("PDF makbuz oluştur")
         self.in_paid.valueChanged.connect(self._recalc_change)
         self.cmb_pay.currentTextChanged.connect(self._on_payment_type_changed)
+        self.cmb_customer.currentTextChanged.connect(self._update_save_button_state)
 
-        # Başlangıç durumu için ödeme türü olayını tetikle
+        # Başlangıç durumu için olayları tetikle
         self._on_payment_type_changed(self.cmb_pay.currentText())
+        self._update_save_button_state()
 
         # ilk oran
-        QTimer.singleShot(0, lambda: splitter.setSizes([self.width()-480, 480]))  # sağ panel genişletildi
+        QTimer.singleShot(0, lambda: splitter.setSizes([self.width()-420, 420]))
         QTimer.singleShot(0, lambda: self._paint_sky(self.width(), self.height()))
 
     # — yardımcılar
+    def _update_save_button_state(self):
+        """Cari seçilmediğinde Kaydet butonunu disable et"""
+        has_customer = bool(self.cmb_customer.currentText().strip())
+        has_items = self.table.rowCount() > 0
+        self.btn_save.setEnabled(has_customer and has_items)
+
     def _apply_customer_completer(self):
         from PyQt6.QtWidgets import QCompleter
         self.cmb_customer.setEditable(True)
@@ -1168,6 +1428,19 @@ class SalesPage(QWidget):
         super().resizeEvent(e)
         if hasattr(self, '_sky'):
             self._sky.resize(self.size())
+            # Debounce ile paint çağrısı - çok sık resize'de performans sorunu önler
+            self._resize_timer.start(100)  # 100ms debounce
+
+        # Özet her zaman 1 kolon (3 satır) kalsın
+        try:
+            if hasattr(self, '_summary_grid'):
+                self._apply_summary_layout(self._summary_grid, max_cols=1)
+        except Exception:
+            pass
+
+    def _on_resize_timeout(self):
+        """Resize tamamlandıktan sonra sky'i yeniden çiz"""
+        if hasattr(self, '_sky'):
             self._paint_sky(self.width(), self.height())
 
     # — yardımcılar
@@ -1183,16 +1456,121 @@ class SalesPage(QWidget):
     def _calc_total(self) -> float:
         total = 0.0
         for i in range(self.table.rowCount()):
-            total += float(self.table.item(i, 5).data(Qt.ItemDataRole.UserRole) or 0.0)
+            total += float(self.table.item(i, 7).data(Qt.ItemDataRole.UserRole) or 0.0)
         return total
+
+    def _guess_milyem(self, name: str, category: str = "") -> float:
+        t = (name or "").lower()
+        if "külçe" in t or "gram altın" in t or "24" in t:  # saf
+            return 995
+        if "22" in t: return 916
+        if "18" in t: return 750
+        if "14" in t: return 585
+        return 916  # varsayılan
+
+    def _round_to_step(self, v: float) -> float:
+        # Panel yoksa _round_step kullan
+        try:
+            if hasattr(self, "cmb_round"):
+                step = float(self.cmb_round.currentText())
+            else:
+                step = getattr(self, "_round_step", 10.0)
+        except Exception:
+            step = getattr(self, "_round_step", 10.0)
+        if step <= 0:
+            return v
+        # .5 ve üstünü hep yukarı at (banker rounding sorununu çöz)
+        import math
+        return math.floor(v / step + 0.5) * step
+
+    def _refresh_row_pricing(self, r: int):
+        # temel alanlar
+        gram = float(str(self.table.item(r, 2).text()).replace(",", ".") or 0.0)
+        adet = int(self.table.item(r, 3).text() or "1")
+        name = self.table.item(r, 1).text()
+
+        # milyem (boşsa üründen tahmin et ve hücreye yaz)
+        mil_txt = (self.table.item(r, 4).text() or "").strip()
+        if mil_txt:
+            try: mil = float(mil_txt.replace(",", "."))
+            except: mil = self._guess_milyem(name)
+        else:
+            mil = self._guess_milyem(name)
+            self.table.item(r, 4).setText(str(int(mil)))
+
+        base   = float(self.sp_base_price.value()) if hasattr(self, "sp_base_price") else getattr(self, "_base_price", 3500.0)
+        markup = float(self.sp_markup.value())     if hasattr(self, "sp_markup")     else getattr(self, "_markup", 0.0)
+        isc    = float(self.table.item(r, 5).data(Qt.ItemDataRole.UserRole) or 0.0)
+
+        # İşçilik sütununda toplam işçiliği göster (ekranda adet*isc, hesapta isc)
+        it_isc = self.table.item(r, 5)
+        if it_isc:
+            it_isc.setText(tl(adet * isc))  # Ekranda toplam işçilik
+            # UserRole'da birim işçilik kalsın (hesaplamalar için)
+
+        # Birim Fiyat = Gram × (Milyem/1000) × Baz × (1+Kâr)
+        raw_unit = gram * (mil / 1000.0) * base
+        unit_with_markup = raw_unit * (1.0 + markup / 100.0)
+        unit_price = self._round_to_step(unit_with_markup)
+
+        # kol.6: Birim Fiyat
+        it_price = self.table.item(r, 6)
+        if it_price is None:
+            it_price = QTableWidgetItem()
+            it_price.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(r, 6, it_price)
+        it_price.setData(Qt.ItemDataRole.UserRole, unit_price)
+        it_price.setText(tl(unit_price))
+
+        # kol.7: Tutar = adet*(birim + işçilik)
+        total = adet * (unit_price + isc)   # veya: adet*unit_price + adet*isc
+        it_total = self.table.item(r, 7)
+        if it_total is None:
+            it_total = QTableWidgetItem()
+            it_total.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(r, 7, it_total)
+        it_total.setData(Qt.ItemDataRole.UserRole, total)
+        it_total.setText(tl(total))
+
+    def _reprice_all(self):
+        for r in range(self.table.rowCount()):
+            self._refresh_row_pricing(r)
+        self._recalc()
+
+    def _calc_row_total(self, r: int) -> float:
+        # toplam tutarı güvenle üret (gerekirse satırı tazeler)
+        self._refresh_row_pricing(r)
+        return float(self.table.item(r, 7).data(Qt.ItemDataRole.UserRole) or 0.0)
+
+    def _apply_summary_layout(self, grid, max_cols: int):
+        """Flex benzeri: verilen sütun sayısına göre (etiket, değer) çiftlerini ızgaraya dizer."""
+        # Önce mevcut item'ları temizle
+        while grid.count():
+            item = grid.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+        # Çiftleri sırayla doldur
+        r = c = 0
+        for (lab, val) in self._summary_pairs:
+            grid.addWidget(lab, r, c)
+            grid.addWidget(val, r, c+1)
+            # her bir çift 2 sütun kullanıyor → sonraki blok
+            c += 2
+            if c >= (max_cols * 2):
+                r += 1
+                c = 0
+        # Esneme — değer sütunları esnesin
+        total_cols = min(max_cols, max(1, len(self._summary_pairs))) * 2
+        for i in range(total_cols):
+            grid.setColumnStretch(i, 1 if i % 2 == 1 else 0)  # değer sütunları 1
 
     def _recalc(self):
         rows = self.table.rowCount()
         total = self._calc_total()
-        self.lbl_sum_count.setText(f"{rows}")           # sadece sayı
-        self.lbl_sum_sub.setText(f"{tl(total)}")        # sadece tutar
-        self.lbl_sum_disc.setText(f"{tl(0.0)}")
-        self.lbl_sum_total.setText(f"{tl(total)}")      # büyük pill
+        self.lbl_sum_count.setText(f"{rows}")
+        self.lbl_sum_sub.setText(f"{tl(total)}")
+        self.lbl_sum_total.setText(f"{tl(total)}")
         self._total_big.setText(f"Genel Toplam: {tl(total)}")
         self._recalc_change()
 
@@ -1221,7 +1599,7 @@ class SalesPage(QWidget):
         if self.cmb_pay.currentText() == "Veresiye":
             self.lbl_change.setVisible(False)
             self.lbl_remaining.setVisible(True)
-            self.lbl_remaining.setText(f"{tl(total)}")
+            self.lbl_remaining.setText(f"Kalan (Veresiye): {tl(total)}")
             # grid sağ altına remaining'i koy (change yerine)
             if self.lbl_change.parentWidget() is not None:
                 parent = self.lbl_change.parentWidget().layout()
@@ -1231,8 +1609,27 @@ class SalesPage(QWidget):
             self.lbl_remaining.setVisible(False)
             self.lbl_change.setVisible(True)
             paid = float(self.in_paid.value())
-            change = max(0.0, paid - total)
-            self.lbl_change.setText(f"{tl(change)}")
+            if paid < total and paid > 0:
+                # Eksik ödeme durumunda kırmızı uyarı
+                self.lbl_change.setText(f"Eksik: {tl(total - paid)}")
+                self.lbl_change.setStyleSheet("""
+                    QLabel {
+                        color: #FF6B6B; font-weight: 600; padding: 8px 10px;
+                        border-radius: 10px; background: rgba(255,107,107,0.10);
+                        border: 1px solid rgba(255,107,107,0.25);
+                    }
+                """)
+            else:
+                # Normal para üstü veya tam ödeme
+                change = max(0.0, paid - total)
+                self.lbl_change.setText(f"Para Üstü: {tl(change)}")
+                self.lbl_change.setStyleSheet("""
+                    QLabel {
+                        color: #2ECC71; font-weight: 600; padding: 8px 10px;
+                        border-radius: 10px; background: rgba(46,204,113,0.10);
+                        border: 1px solid rgba(46,204,113,0.25);
+                    }
+                """)
             if self.lbl_remaining.parentWidget() is not None:
                 parent = self.lbl_remaining.parentWidget().layout()
                 if parent is not None:
@@ -1258,51 +1655,29 @@ class SalesPage(QWidget):
             self._append_row(d)
         self._recalc()
 
-    def add_item(self):
-        dlg = NewSaleItemDialog(self, PRODUCTS)
-        if dlg.exec():
-            data = dlg.data()
-
-            # Stok kontrolü
-            product = None
-            for p in PRODUCTS:
-                if p["Kod"] == data["Kod"]:
-                    product = p
-                    break
-
-            if product:
-                if self.cmb_type.currentText() == "Satış" and data["Adet"] > product["Stok"]:
-                    QMessageBox.warning(self, "Stok Uyarısı",
-                                      f"{product['Ad']} için yeterli stok yok!\n"
-                                      f"Mevcut stok: {product['Stok']} adet\n"
-                                      f"İstenen: {data['Adet']} adet")
-                    return
-                elif self.cmb_type.currentText() == "Alış":
-                    # Alış işleminde stok artacak, kontrol etmeye gerek yok
-                    pass
-
-                # Stok bilgisini göster
-                QMessageBox.information(self, "Stok Bilgisi",
-                                      f"{product['Ad']}\n"
-                                      f"Mevcut Stok: {product['Stok']} adet\n"
-                                      f"İşlem: {self.cmb_type.currentText()}")
-
-            self._append_row(data)
-            self._recalc()
 
     def edit_item(self):
         row = self._selected_row()
-        if row is None: return
+        if row is None:
+            return
+
         current = {
             "Kod": self.table.item(row,0).text(),
             "Ad":  self.table.item(row,1).text(),
             "Gram": float(self.table.item(row,2).text().replace(",", ".")),
             "Adet": int(self.table.item(row,3).text()),
-            "BirimFiyat": float(self.table.item(row,4).data(Qt.ItemDataRole.UserRole) or 0.0),
+            "BirimFiyat": float(self.table.item(row,6).data(Qt.ItemDataRole.UserRole) or 0.0),  # <- 6. sütun
         }
+
         dlg = NewSaleItemDialog(self, PRODUCTS, current)
         if dlg.exec():
-            self._set_row(row, dlg.data())
+            data = dlg.data()
+            # Mevcut milyem/işçilik değerlerini kaybetme
+            if "Milyem" not in data:
+                data["Milyem"] = self.table.item(row,4).text()
+            if "Iscilik" not in data:
+                data["Iscilik"] = float(self.table.item(row,5).data(Qt.ItemDataRole.UserRole) or 0.0)
+            self._set_row(row, data)
             self._recalc()
 
     def remove_item(self):
@@ -1316,32 +1691,71 @@ class SalesPage(QWidget):
     def _append_row(self, d):
         r = self.table.rowCount()
         self.table.insertRow(r)
+        d.setdefault("Milyem", str(int(self._guess_milyem(d.get("Ad",""), ""))))
         self._set_row(r, d)
 
     def _set_row(self, r, d):
         self.table.setItem(r,0, QTableWidgetItem(d["Kod"]))
         self.table.setItem(r,1, QTableWidgetItem(d["Ad"]))
+
         it_gram = QTableWidgetItem(f"{d['Gram']:.2f}")
         it_gram.setTextAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
         self.table.setItem(r,2, it_gram)
+
         it_adet = QTableWidgetItem(str(d["Adet"]))
         it_adet.setTextAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
         self.table.setItem(r,3, it_adet)
-        it_price = QTableWidgetItem(tl(d["BirimFiyat"]))
-        it_price.setData(Qt.ItemDataRole.UserRole, float(d["BirimFiyat"]))
-        it_price.setTextAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
-        self.table.setItem(r,4, it_price)
-        tutar = d["Adet"] * d["BirimFiyat"]
-        it_total = QTableWidgetItem(tl(tutar))
-        it_total.setData(Qt.ItemDataRole.UserRole, float(tutar))
-        it_total.setTextAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
-        self.table.setItem(r,5, it_total)
+
+        # Milyem
+        mil = str(d.get("Milyem",""))
+        it_m = QTableWidgetItem(mil)
+        it_m.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.setItem(r,4, it_m)
+
+        # İşçilik
+        isc = float(d.get("Iscilik", 0.0))
+        it_i = QTableWidgetItem(tl(isc))
+        it_i.setData(Qt.ItemDataRole.UserRole, isc)
+        it_i.setTextAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
+        self.table.setItem(r,5, it_i)
+
+        # 6. sütun (Birim Fiyat) — formülden hesaplanacağı için boş item oluştur
+        it_price = QTableWidgetItem()
+        it_price.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.table.setItem(r, 6, it_price)
+
+        # 7. sütun (Tutar) için placeholder
+        it_total = QTableWidgetItem()
+        it_total.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.table.setItem(r, 7, it_total)
+
+        # SON: bu satırı formüle göre fiyatla
+        self._refresh_row_pricing(r)
 
     def save_transaction(self):
         """İşlemi kaydet ve formu temizle"""
         if self.table.rowCount() == 0:
             QMessageBox.warning(self, "Uyarı", "Kaydedilecek satır bulunamadı!")
             return
+        if not self.cmb_customer.currentText().strip():
+            QMessageBox.warning(self, "Uyarı", "Lütfen bir cari seçin.")
+            return
+
+        # Eksik ödeme kontrolü (Nakit/Kart/Havale için)
+        total_amount = self._calc_total()
+        paid_amount = float(self.in_paid.value()) if self.cmb_pay.currentText() != "Veresiye" else total_amount
+
+        if self.cmb_pay.currentText() != "Veresiye" and paid_amount < total_amount:
+            reply = QMessageBox.question(self, "Eksik Ödeme Onayı",
+                f"Ödeme tutarı toplam tutardan az!\n\n"
+                f"Toplam Tutar: {tl(total_amount)}\n"
+                f"Ödenen Tutar: {tl(paid_amount)}\n"
+                f"Eksik Tutar: {tl(total_amount - paid_amount)}\n\n"
+                f"İşlemi eksik ödeme ile kaydetmek istiyor musunuz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
 
         # İşlem özeti
         transaction_type = self.cmb_type.currentText()
@@ -1366,6 +1780,185 @@ class SalesPage(QWidget):
         # Formu temizle - yeni işlem için hazırla
         self._clear_form()
 
+    def generate_receipt_pdf(self):
+        """PDF makbuz oluştur"""
+        if not PDF_AVAILABLE:
+            QMessageBox.warning(self, "PDF Kütüphanesi Yok",
+                "PDF oluşturmak için reportlab kütüphanesini yükleyin:\n\n"
+                "pip install reportlab")
+            return
+
+        if self.table.rowCount() == 0:
+            QMessageBox.warning(self, "Uyarı", "Makbuz oluşturulacak satır bulunamadı!")
+            return
+
+        # Font kontrolü - eğer fontlar mevcut değilse uyarı ver
+        if not FONTS_AVAILABLE:
+            reply = QMessageBox.question(self, "Unicode Font Uyarısı",
+                "Türkçe karakterler (ç, ğ, ş, ö, ü) ve ₺ işareti için\n"
+                "DejaVu fontları önerilir.\n\n"
+                "Fontları indirmek için:\n"
+                "https://dejavu-fonts.github.io/Download.html\n\n"
+                "İndirdikten sonra:\n"
+                "app/assets/fonts/ dizinine koyun:\n"
+                "• DejaVuSans.ttf\n"
+                "• DejaVuSans-Bold.ttf\n\n"
+                "Devam etmek istiyor musunuz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # PDF dosya adı oluştur
+        from PyQt6.QtWidgets import QFileDialog
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Makbuz Kaydet", f"makbuz_{self.in_docno.text()}.pdf",
+            "PDF Dosyaları (*.pdf)"
+        )
+
+        if not file_name:
+            return
+
+        try:
+            # PDF oluştur
+            doc = SimpleDocTemplate(file_name, pagesize=A5)
+            styles = getSampleStyleSheet()
+
+            # Font kullanılabilirliğini kontrol et
+            use_unicode_font = FONTS_AVAILABLE if 'FONTS_AVAILABLE' in globals() else False
+            if use_unicode_font:
+                # Hangi font türü yüklendiyse onu kullan
+                try:
+                    pdfmetrics.getFont("DejaVu")
+                    normal_font = "DejaVu"
+                    bold_font = "DejaVu-Bold"
+                except:
+                    normal_font = "SystemFont"
+                    bold_font = "SystemFont-Bold"
+            else:
+                normal_font = "Helvetica"
+                bold_font = "Helvetica-Bold"
+
+            # Özel stiller - Unicode fontlarla
+            title_style = ParagraphStyle(
+                'Title',
+                parent=styles['Heading1'],
+                fontName=bold_font,
+                fontSize=16,
+                spaceAfter=10,
+                alignment=1,  # Center
+                textColor=colors.darkblue
+            )
+
+            header_style = ParagraphStyle(
+                'Header',
+                parent=styles['Normal'],
+                fontName=normal_font,
+                fontSize=12,
+                spaceAfter=5,
+                alignment=0
+            )
+
+            table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), bold_font),    # başlık satırı
+                ('FONTNAME', (0, 1), (-1, -1), normal_font), # gövde
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ])
+
+            # PDF içeriği
+            story = []
+
+            # Başlık
+            story.append(Paragraph("ORBİTX KUYUMCU", title_style))
+            story.append(Paragraph("SATIŞ MAKBUZU", title_style))
+            story.append(Spacer(1, 0.5*cm))
+
+            # İşlem bilgileri
+            customer_info = self.cmb_customer.currentText()
+            doc_no = self.in_docno.text()
+            date = self.in_date.text()
+            transaction_type = self.cmb_type.currentText()
+
+            story.append(Paragraph(f"<b>Belge No:</b> {doc_no}", header_style))
+            story.append(Paragraph(f"<b>Tarih:</b> {date}", header_style))
+            story.append(Paragraph(f"<b>İşlem Türü:</b> {transaction_type}", header_style))
+            story.append(Paragraph(f"<b>Müşteri:</b> {customer_info}", header_style))
+            story.append(Spacer(1, 0.3*cm))
+
+            # Ürün tablosu
+            table_data = [['Ürün Adı', 'Gram', 'Adet', 'Birim Fiyat', 'Toplam']]
+
+            for row in range(self.table.rowCount()):
+                product_name = self.table.item(row, 1).text()
+                gram = self.table.item(row, 2).text()
+                adet = self.table.item(row, 3).text()
+                unit_price = self.table.item(row, 6).text()
+                total = self.table.item(row, 7).text()
+
+                table_data.append([product_name, gram, adet, unit_price, total])
+
+            # Toplamlar için boş satır
+            table_data.append(['', '', '', 'TOPLAM:', self.lbl_sum_total.text()])
+
+            # Tabloyu oluştur
+            col_widths = [4*cm, 2*cm, 1.5*cm, 2.5*cm, 2.5*cm]
+            table = Table(table_data, colWidths=col_widths)
+            table.setStyle(table_style)
+            story.append(table)
+            story.append(Spacer(1, 0.5*cm))
+
+            # Ödeme bilgileri
+            payment_type = self.cmb_pay.currentText()
+            story.append(Paragraph(f"<b>Ödeme Türü:</b> {payment_type}", header_style))
+
+            if payment_type != "Veresiye":
+                paid_amount = tl(float(self.in_paid.value()))
+                total_amount = self.lbl_sum_total.text()
+                change = self.lbl_change.text()
+                story.append(Paragraph(f"<b>Alınan Tutar:</b> {paid_amount}", header_style))
+                story.append(Paragraph(f"<b>Toplam Tutar:</b> {total_amount}", header_style))
+                story.append(Paragraph(f"<b>{change}</b>", header_style))
+            else:
+                remaining = self.lbl_remaining.text()
+                story.append(Paragraph(f"<b>{remaining}</b>", header_style))
+
+            story.append(Spacer(1, 0.5*cm))
+
+            # Alt bilgi - Unicode font ile
+            footer_style = ParagraphStyle(
+                'Footer',
+                parent=styles['Normal'],
+                fontName=normal_font,
+                fontSize=10,
+                alignment=1,  # Center
+                spaceBefore=20
+            )
+            story.append(Paragraph("Teşekkür ederiz!", footer_style))
+
+            # PDF'i oluştur
+            doc.build(story)
+
+            # Font durumu hakkında bilgi ver
+            font_info = ""
+            if use_unicode_font:
+                font_info = "\n\n✓ Unicode fontlar kullanıldı (Türkçe karakterler ve ₺ işareti destekleniyor)"
+            else:
+                font_info = "\n\n⚠️ Varsayılan font kullanıldı (bazı karakterler doğru görünmeyebilir)"
+
+            QMessageBox.information(self, "Makbuz Oluşturuldu",
+                f"Makbuz başarıyla kaydedildi:\n\n{file_name}{font_info}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Hata",
+                f"Makbuz oluşturulurken hata oluştu:\n\n{str(e)}")
+
     def _clear_form(self):
         """Formu temizle"""
         self.table.setRowCount(0)
@@ -1373,12 +1966,17 @@ class SalesPage(QWidget):
         self.in_paid.setValue(0)
         self.lbl_sum_count.setText("0")
         self.lbl_sum_sub.setText(tl(0))
-        self.lbl_sum_disc.setText(tl(0))
         self.lbl_sum_total.setText(tl(0))
-        self.lbl_change.setText(tl(0))
-        self.lbl_remaining.setText(tl(0))
+        self.lbl_change.setText(f"Para Üstü: {tl(0)}")
+        self.lbl_remaining.setText(f"Kalan (Veresiye): {tl(0)}")
 
         # Yeni belge numarası oluştur
         import random
         doc_no = f"SL{f'{random.randint(1, 9999):04d}'}"
         self.in_docno.setText(doc_no)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Delete:
+            self.remove_item()
+        else:
+            super().keyPressEvent(e)
