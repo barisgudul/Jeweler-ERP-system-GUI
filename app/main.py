@@ -66,6 +66,9 @@ class MainWindow(QMainWindow):
         self.reports = ReportsPage()
         self.parameters = ParametersPage()
 
+        # Sales → Finance sinyal bağlantısı
+        self.sales.transactionCommitted.connect(self.finance.add_row_from_sales)
+
         self.stack.addWidget(self.login)      # 0
         self.stack.addWidget(self.dashboard)  # 1
         self.stack.addWidget(self.stock)      # 2

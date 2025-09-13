@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QComboBox, QDateEdit, QTimeEdit, QPushButton, QGroupBox, QFormLayout,
     QDoubleSpinBox, QTextEdit, QMessageBox, QDialog, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QDate, QTime, QLocale, QTimer, QSettings
+from PyQt6.QtCore import Qt, QDate, QTime, QDateTime, QLocale, QTimer, QSettings
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QLinearGradient, QColor, QPalette, QShortcut, QKeySequence
 from random import randint, choice
 from theme import elevate, apply_dialog_theme
@@ -984,15 +984,27 @@ class FinancePage(QWidget):
         for i, r in enumerate(vis):
             it_date = QTableWidgetItem(r["tarih"])
             it_date.setData(Qt.ItemDataRole.UserRole, r["id"])
+            # Sıralama için tarih+saat'i UserRole'a koy (PyQt6'da SortRole yok)
+            dt = QDateTime.fromString(f"{r['tarih']} {r['saat']}", "dd.MM.yyyy HH:mm")
+            it_date.setData(Qt.ItemDataRole.UserRole + 1, dt)  # UserRole + 1 kullan
             self.table.setItem(i, 0, it_date)
+
             self.table.setItem(i, 1, QTableWidgetItem(r["saat"]))
             self.table.setItem(i, 2, QTableWidgetItem(r["hesap"]))
             self.table.setItem(i, 3, QTableWidgetItem(r["tur"]))
             self.table.setItem(i, 4, QTableWidgetItem(r["kategori"]))
-            self.table.setItem(i, 5, QTableWidgetItem(r["aciklama"]))
+
+            # açıklama hücresine tooltip olarak cari adını göster
+            desc_item = QTableWidgetItem(r["aciklama"])
+            if r.get("cari"):
+                desc_item.setToolTip(f"İlişkili Cari: {r['cari']}")
+            self.table.setItem(i, 5, desc_item)
+
             it = QTableWidgetItem(tl(abs(r["tutar"])))
             it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             it.setForeground(QColor(120,200,140) if r["tutar"] >= 0 else QColor(220,120,120))
+            # (istersen tutarı da UserRole'a numeric ver)
+            it.setData(Qt.ItemDataRole.UserRole + 2, abs(float(r["tutar"])))
             self.table.setItem(i, 6, it)
 
         self._visible_cache = vis
@@ -1001,6 +1013,9 @@ class FinancePage(QWidget):
         # Sıralamayı geri aç
         if sorting_enabled:
             self.table.setSortingEnabled(True)
+
+        # Varsayılan: tarih (kolon 0) AZALAN (en yeni en üstte)
+        self.table.sortItems(0, Qt.SortOrder.DescendingOrder)
 
     def _recalc_summary(self, rows: list[dict]):
         total_in  = sum(r["tutar"] for r in rows if r["tutar"] > 0)
@@ -1067,6 +1082,29 @@ class FinancePage(QWidget):
         dlg.f_cat.setCurrentText(rec["kategori"])
         dlg.f_desc.setPlainText(rec["aciklama"])
         dlg.f_amt.setValue(abs(float(rec["tutar"])))
+
+        # ---- İLİŞKİLİ CARİYİ DOĞRU SEÇ ----
+        cust = rec.get("cari", "").strip()
+        if cust:
+            # Sales'ten "Ad Soyad — 05xx..." veya "Ad Soyad — Cari: CAR0001" gelebilir
+            # önce combobox formatına çevir
+            display = self._resolve_customer_display(cust) or cust
+
+            # 1) tam eşleşme dene
+            idx = dlg.f_customer.findText(display, Qt.MatchFlag.MatchExactly)
+
+            if idx < 0:
+                # 2) yalnızca ad-soyad ile prefix karşılaştır (sağlam yöntem)
+                base = display.split(" — ")[0].strip().lower()
+                for i in range(dlg.f_customer.count()):
+                    cand = dlg.f_customer.itemText(i).split(" — ")[0].strip().lower()
+                    if cand == base:
+                        idx = i
+                        break
+
+            if idx >= 0:
+                dlg.f_customer.setCurrentIndex(idx)
+
         dlg._refresh_state()
 
         if dlg.exec():
@@ -1083,6 +1121,7 @@ class FinancePage(QWidget):
                 "kategori": data["kategori"],
                 "aciklama": data["aciklama"],
                 "tutar":  data["tutar"] if data["tur"] == "Giriş" else -data["tutar"],
+                "cari": data["cari"] if not data["cari"].startswith("Müşteri Seç") else "",
             })
             self._refresh_table()
             # Kısa bekletme ile tablonun güncellenmesini bekle
@@ -1121,6 +1160,23 @@ class FinancePage(QWidget):
 
     def open_new_record_dialog(self, record_type):
         dlg = NewFinanceRecordDialog(self, record_type)
+
+        # >>> EK: satıştan gelen cariyi combobox'ta seç
+        default_cari = getattr(self, "_last_sales_customer_display", "")
+        if default_cari:
+            # önce tam eşleşme dene
+            idx = dlg.f_customer.findText(default_cari)
+            if idx < 0:
+                # isim bazlı eşleşme (Ayşe Kaya == "Ayşe Kaya — Cari: ...")
+                base = default_cari.split(" — ")[0].strip().lower()
+                for i in range(dlg.f_customer.count()):
+                    cand = dlg.f_customer.itemText(i).split(" — ")[0].strip().lower()
+                    if cand == base:
+                        idx = i
+                        break
+            if idx >= 0:
+                dlg.f_customer.setCurrentIndex(idx)
+
         if dlg.exec():
             data = dlg.data()
             if not data["aciklama"].strip() or data["tutar"] <= 0:
@@ -1137,6 +1193,7 @@ class FinancePage(QWidget):
                 "kategori": data["kategori"],
                 "aciklama": data["aciklama"],
                 "tutar":  data["tutar"] if record_type=="Giriş" else -data["tutar"],
+                "cari": data["cari"] if not data["cari"].startswith("Müşteri Seç") else "",
             })
             self._seq += 1
             self._refresh_table()
@@ -1285,6 +1342,7 @@ class FinancePage(QWidget):
             </table>
             <br/>
             # Toplam hesaplamaları
+            rows = getattr(self, "_visible_cache", [])
             total_in  = sum(r['tutar'] for r in rows if r['tutar'] > 0)
             total_out = -sum(r['tutar'] for r in rows if r['tutar'] < 0)
             net       = sum(r['tutar'] for r in rows)
@@ -1354,6 +1412,71 @@ class FinancePage(QWidget):
         s.setValue("sortOrder", hdr.sortIndicatorOrder().value)
         s.endGroup()
 
+    # --- Yardımcı eşleştirici ---
+    def _resolve_customer_display(self, name: str) -> str:
+        """Sales'ten gelen basit isim 'Zeynep Arslan' -> combobox görünümü 'Zeynep Arslan — Cari: CAR0003'."""
+        if not name:
+            return ""
+        name = name.strip().lower()
+        for item in CUSTOMERS_FOR_FINANCE:
+            base = item.split(" — ")[0].strip().lower()
+            if base == name or base.startswith(name):
+                return item
+        return ""
+
+    def add_row_from_sales(self, payload: dict):
+        """Sales sayfasından gelen işlemi finans defterine ekle (MODELE yazar)."""
+        try:
+            # Tarih biçimini düzelt (dd.MM.yyyy veya yyyy-MM-dd destekle)
+            tarih_str = payload.get("tarih", "")
+            qd = QDate.fromString(tarih_str, "dd.MM.yyyy")
+            if not qd.isValid():
+                qd = QDate.fromString(tarih_str, "yyyy-MM-dd")
+            tarih = qd.toString("dd.MM.yyyy") if qd.isValid() else tarih_str
+
+            # Saat: mevcut an
+            saat = QTime.currentTime().toString("HH:mm")
+
+            # Tür/kategori ve tutar işareti
+            tur = "Giriş" if payload.get("tip") == "Gelir" else "Çıkış"
+            kategori = "Satış Tahsilatı" if tur == "Giriş" else "Tedarikçi Ödemesi"
+            tutar = float(payload.get("tutar", 0.0))
+            tutar = tutar if tur == "Giriş" else -tutar
+
+            # Hesap: ödeme türüne göre mantıklı varsayılan
+            odeme = (payload.get("odeme_turu") or "").lower()
+            hesap = "Banka — VakıfBank" if any(k in odeme for k in ["havale","eft","banka"]) else "Kasa"
+
+            # Cari
+            cari_raw = payload.get("cari", "")
+            cari_disp = self._resolve_customer_display(cari_raw)
+
+            # Açıklama (cari zaten ayrı saklanıyor, açıklamayı kısa tut)
+            aciklama = f"{payload.get('belge_no','')} — {payload.get('aciklama','') or payload.get('kategori','')}"
+
+            # MODELE ekle
+            rec = {
+                "id": self._seq,
+                "tarih": tarih, "saat": saat,
+                "hesap": hesap, "tur": tur, "kategori": kategori,
+                "aciklama": aciklama, "tutar": tutar,
+                "cari": cari_disp or cari_raw,   # modelde cari'yi TUT
+            }
+            self._rows.append(rec)
+            self._seq += 1
+
+            # >>> EK: son satış carisini hafızada tut
+            self._last_sales_customer_display = cari_disp or cari_raw
+
+            # Görünümü güncelle ve eklenen satırı seç
+            self._refresh_table()
+            QTimer.singleShot(50, lambda: self._select_id_in_table(rec["id"]))
+
+            print(f"Finans kaydı eklendi: {payload.get('belge_no','')} - {tl(abs(tutar))}")
+
+        except Exception as e:
+            print(f"Finans kaydı ekleme hatası: {e}")
+
     def _load_prefs(self):
         self._loading_prefs = True
         s = self._prefs()
@@ -1396,3 +1519,6 @@ class FinancePage(QWidget):
 
         # Görünümü güncelle
         self._refresh_table()
+
+        # Açılışta da en yeni en üstte olsun
+        QTimer.singleShot(100, lambda: self.table.sortItems(0, Qt.SortOrder.DescendingOrder))

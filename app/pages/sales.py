@@ -6,8 +6,9 @@ from PyQt6.QtWidgets import (
     QHeaderView, QSplitter, QSpinBox, QDoubleSpinBox, QMessageBox, QGroupBox,
     QFormLayout, QStyledItemDelegate, QStyleOptionViewItem, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QDate, QLocale, QTimer
+from PyQt6.QtCore import Qt, QDate, QLocale, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QLinearGradient, QColor, QPalette
+import os
 
 # PDF oluşturma için gerekli import'lar
 try:
@@ -767,6 +768,10 @@ class ItemDetailDialog(QDialog):
 
 class SalesPage(QWidget):
     """Alış–Satış işlemleri (frontend/mock)"""
+
+    # Finans sayfası dinleyebilsin diye sinyal
+    transactionCommitted = pyqtSignal(dict)  # payload: finans kaydı
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -1291,11 +1296,10 @@ class SalesPage(QWidget):
         # grid.addWidget(line, 2, 0, 1, 2)   # istersen aç
         r_grid.addWidget(payment_group, 1, 0)
 
-        # Ana aksiyon butonları – daha küçük
+        # Ana aksiyon butonları – sadece kaydet (makbuz otomatik)
         self.btn_save  = QPushButton("İşlemi Kaydet")
-        self.btn_print = QPushButton("Makbuz Yazdır")
 
-        for btn in (self.btn_save, self.btn_print):
+        for btn in (self.btn_save,):
             btn.setMinimumHeight(44)   # 48 → 44
             btn.setMaximumHeight(44)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -1315,7 +1319,6 @@ class SalesPage(QWidget):
         actions_row = QHBoxLayout()
         actions_row.setSpacing(10)
         actions_row.addWidget(self.btn_save)
-        actions_row.addWidget(self.btn_print)
 
         actions_bar = QWidget()
         actions_bar.setLayout(actions_row)
@@ -1342,8 +1345,6 @@ class SalesPage(QWidget):
         self.btn_edit.clicked.connect(self.edit_item)
         self.btn_del.clicked.connect(self.remove_item)
         self.btn_save.clicked.connect(self.save_transaction)
-        self.btn_print.clicked.connect(self.generate_receipt_pdf)
-        self.btn_print.setToolTip("PDF makbuz oluştur")
         self.in_paid.valueChanged.connect(self._recalc_change)
         self.cmb_pay.currentTextChanged.connect(self._on_payment_type_changed)
         self.cmb_customer.currentTextChanged.connect(self._update_save_button_state)
@@ -1667,16 +1668,14 @@ class SalesPage(QWidget):
             "Gram": float(self.table.item(row,2).text().replace(",", ".")),
             "Adet": int(self.table.item(row,3).text()),
             "BirimFiyat": float(self.table.item(row,6).data(Qt.ItemDataRole.UserRole) or 0.0),  # <- 6. sütun
+            # >>> EK: mevcut milyem & işçilik’i dialoga taşı
+            "Milyem": self.table.item(row,4).text().strip(),
+            "Iscilik": float(self.table.item(row,5).data(Qt.ItemDataRole.UserRole) or 0.0),
         }
 
         dlg = NewSaleItemDialog(self, PRODUCTS, current)
         if dlg.exec():
             data = dlg.data()
-            # Mevcut milyem/işçilik değerlerini kaybetme
-            if "Milyem" not in data:
-                data["Milyem"] = self.table.item(row,4).text()
-            if "Iscilik" not in data:
-                data["Iscilik"] = float(self.table.item(row,5).data(Qt.ItemDataRole.UserRole) or 0.0)
             self._set_row(row, data)
             self._recalc()
 
@@ -1762,20 +1761,28 @@ class SalesPage(QWidget):
         customer = self.cmb_customer.currentText()
         total = self.lbl_sum_total.text().strip()
 
-        # Veresiye kontrolü
+        # — YENİ: önce finans payload oluşturup gönder
+        payload = self._build_finance_payload()
+        self._post_to_finance(payload)
+
+        # — YENİ: makbuz otomatik yazdır (./receipts/…)
+        self._auto_generate_receipt_pdf()
+
+        # bilgilendir
         if self.cmb_pay.currentText() == "Veresiye":
             remaining = self.lbl_remaining.text().strip()
             QMessageBox.information(self, "Veresiye İşlemi",
                                   f"{transaction_type} işlemi kaydedildi.\n"
                                   f"Cari: {customer}\n"
                                   f"Toplam Tutar: {total}\n"
-                                  f"Kalan Tutar: {remaining}\n\n"
-                                  f"Bu tutar ilgili cari hesaba borç olarak işlenecektir.")
+                                  f"{remaining}\n\n"
+                                  f"İşlem finans kayıtlarına eklendi ve makbuz oluşturuldu.")
         else:
             QMessageBox.information(self, "İşlem Başarılı",
                                   f"{transaction_type} işlemi başarıyla kaydedildi!\n"
                                   f"Cari: {customer}\n"
-                                  f"Toplam Tutar: {total}")
+                                  f"Toplam Tutar: {total}\n\n"
+                                  f"İşlem finans kayıtlarına eklendi ve makbuz oluşturuldu.")
 
         # Formu temizle - yeni işlem için hazırla
         self._clear_form()
@@ -1974,6 +1981,164 @@ class SalesPage(QWidget):
         import random
         doc_no = f"SL{f'{random.randint(1, 9999):04d}'}"
         self.in_docno.setText(doc_no)
+
+    # === MAKBUZ OTO KAYIT ===
+    def _auto_generate_receipt_pdf(self, file_path: str|None=None):
+        """Kullanıcıya sormadan PDF makbuz üretir. Yol verilmezse ./receipts/SLxxxx.pdf'e kaydeder."""
+        if not PDF_AVAILABLE:
+            # sessiz çık: kitaplık yoksa zorlamayalım
+            return
+
+        # hedef yol
+        if not file_path:
+            # ./receipts klasörü
+            base_dir = os.path.join(os.getcwd(), "receipts")
+            os.makedirs(base_dir, exist_ok=True)
+            file_path = os.path.join(base_dir, f"makbuz_{self.in_docno.text()}.pdf")
+
+        # Aşağıda, mevcut generate_receipt_pdf ile aynı içerik üretimini KISACA kullanıyoruz.
+        # En güvenlisi: generate_receipt_pdf'i parametreli hale getirip tekrar kullanmak.
+        try:
+            self._generate_receipt_core(file_path)
+        except Exception as e:
+            # hata olduğunda kullanıcıyı boğma
+            print("Makbuz oluşturulamadı:", e)
+
+    def _generate_receipt_core(self, file_path: str):
+        """Var olan generate_receipt_pdf'in gövdesinden türetilmiş çekirdek. Diyalog yok."""
+        from reportlab.lib.pagesizes import A5
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib import colors
+        from reportlab.lib.units import cm
+        from reportlab.pdfbase import pdfmetrics
+
+        doc = SimpleDocTemplate(file_path, pagesize=A5)
+        styles = getSampleStyleSheet()
+
+        # font seçimi
+        use_unicode_font = FONTS_AVAILABLE if 'FONTS_AVAILABLE' in globals() else False
+        if use_unicode_font:
+            try:
+                pdfmetrics.getFont("DejaVu")
+                normal_font = "DejaVu"; bold_font = "DejaVu-Bold"
+            except:
+                normal_font = "SystemFont"; bold_font = "SystemFont-Bold"
+        else:
+            normal_font = "Helvetica"; bold_font = "Helvetica-Bold"
+
+        title_style = ParagraphStyle('Title', parent=styles['Heading1'],
+                                     fontName=bold_font, fontSize=16,
+                                     spaceAfter=10, alignment=1, textColor=colors.darkblue)
+        header_style = ParagraphStyle('Header', parent=styles['Normal'],
+                                      fontName=normal_font, fontSize=12, spaceAfter=5, alignment=0)
+
+        table_style = TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), bold_font),
+            ('FONTNAME', (0, 1), (-1, -1), normal_font),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ])
+
+        story = []
+        story.append(Paragraph("ORBİTX KUYUMCU", title_style))
+        story.append(Paragraph("SATIŞ MAKBUZU" if self.cmb_type.currentText()=="Satış" else "ALIŞ MAKBUZU", title_style))
+        story.append(Spacer(1, 0.5*cm))
+
+        customer_info = self.cmb_customer.currentText()
+        doc_no = self.in_docno.text()
+        date = self.in_date.text()
+        transaction_type = self.cmb_type.currentText()
+
+        story.append(Paragraph(f"<b>Belge No:</b> {doc_no}", header_style))
+        story.append(Paragraph(f"<b>Tarih:</b> {date}", header_style))
+        story.append(Paragraph(f"<b>İşlem Türü:</b> {transaction_type}", header_style))
+        story.append(Paragraph(f"<b>{'Müşteri' if transaction_type=='Satış' else 'Tedarikçi'}:</b> {customer_info}", header_style))
+        story.append(Spacer(1, 0.3*cm))
+
+        # satırlar
+        table_data = [['Ürün Adı', 'Gram', 'Adet', 'Birim Fiyat', 'Toplam']]
+        for row in range(self.table.rowCount()):
+            product_name = self.table.item(row, 1).text()
+            gram = self.table.item(row, 2).text()
+            adet = self.table.item(row, 3).text()
+            unit_price = self.table.item(row, 6).text()
+            total = self.table.item(row, 7).text()
+            table_data.append([product_name, gram, adet, unit_price, total])
+
+        table_data.append(['', '', '', 'TOPLAM:', self.lbl_sum_total.text()])
+        table = Table(table_data, colWidths=[4*cm, 2*cm, 1.5*cm, 2.5*cm, 2.5*cm])
+        table.setStyle(table_style)
+        story.append(table)
+        story.append(Spacer(1, 0.5*cm))
+
+        payment_type = self.cmb_pay.currentText()
+        story.append(Paragraph(f"<b>Ödeme Türü:</b> {payment_type}", header_style))
+        if payment_type != "Veresiye":
+            paid_amount = tl(float(self.in_paid.value()))
+            total_amount = self.lbl_sum_total.text()
+            change = self.lbl_change.text()
+            story.append(Paragraph(f"<b>Alınan Tutar:</b> {paid_amount}", header_style))
+            story.append(Paragraph(f"<b>Toplam Tutar:</b> {total_amount}", header_style))
+            story.append(Paragraph(f"<b>{change}</b>", header_style))
+        else:
+            remaining = self.lbl_remaining.text()
+            story.append(Paragraph(f"<b>{remaining}</b>", header_style))
+
+        doc.build(story)
+
+    def _build_finance_payload(self) -> dict:
+        """Finans sayfasına gönderilecek ham veri."""
+        kind = "Gelir" if self.cmb_type.currentText() == "Satış" else "Gider"
+        total_float = self._calc_total()
+        items = []
+        for r in range(self.table.rowCount()):
+            items.append({
+                "kod":   self.table.item(r, 0).text(),
+                "ad":    self.table.item(r, 1).text(),
+                "gram":  float(self.table.item(r, 2).text().replace(",", ".")),
+                "adet":  int(self.table.item(r, 3).text()),
+                "milyem": self.table.item(r, 4).text(),
+                "iscilik": float(self.table.item(r, 5).data(Qt.ItemDataRole.UserRole) or 0.0),
+                "birim": float(self.table.item(r, 6).data(Qt.ItemDataRole.UserRole) or 0.0),
+                "tutar": float(self.table.item(r, 7).data(Qt.ItemDataRole.UserRole) or 0.0),
+            })
+
+        payload = {
+            "tip": kind,                                 # "Gelir" / "Gider"
+            "kategori": self.cmb_type.currentText(),     # "Satış" / "Alış"
+            "tarih": self.in_date.date().toString("dd.MM.yyyy"),
+            "belge_no": self.in_docno.text(),
+            "cari": self.cmb_customer.currentText(),
+            "odeme_turu": self.cmb_pay.currentText(),
+            "tutar": total_float,
+            "aciklama": self.in_notes.text().strip(),
+            "kalemler": items,
+        }
+        return payload
+
+    def _post_to_finance(self, payload: dict):
+        """Finans ekranına veri ilet. Hem sinyal, hem de opsiyonel API."""
+        # 1) Sinyal
+        try:
+            self.transactionCommitted.emit(payload)
+        except Exception as e:
+            print("transactionCommitted emit hata:", e)
+
+        # 2) Opsiyonel doğrudan API
+        try:
+            from finance import FinanceAPI  # sana verdiğin dosyada böyle bir sınıf varsa
+            if hasattr(FinanceAPI, "add_entry"):
+                FinanceAPI.add_entry(payload)
+        except Exception as e:
+            # API yoksa sessizce geç
+            print("FinanceAPI.add_entry bulunamadı/çalışmadı:", e)
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Delete:

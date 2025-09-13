@@ -5,10 +5,11 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox, QDoubleSpinBox, QSpinBox, QLabel, QFrame
 )
 from PyQt6.QtGui import QRegularExpressionValidator
-from PyQt6.QtCore import QRegularExpression
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRegularExpression, Qt, QLocale
 from PyQt6.QtGui import QFont
 from typing import Optional
+
+TR = QLocale(QLocale.Language.Turkish, QLocale.Country.Turkey)
 
 CATEGORIES = ["Bilezik", "Yüzük", "Kolye", "Külçe", "Gram"]
 
@@ -450,30 +451,94 @@ class NewSaleItemDialog(QDialog):
             }
         """)
 
+        # >>> EK: Milyem & İşçilik alanları
+        self.cmb_milyem = QComboBox()
+        self.cmb_milyem.addItems(["995","916","900","875","835","750","585","375"])
+        self.cmb_milyem.setStyleSheet("""
+            QComboBox {
+                padding: 10px 12px;
+                border-radius: 8px;
+                background: rgba(255,255,255,0.04);
+                border: 1px solid rgba(255,255,255,0.08);
+                color: #E9EDF2;
+                font-size: 14px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background: rgba(28,34,44,0.98);
+                color: #E9EDF2;
+                border: 1px solid rgba(255,255,255,0.08);
+                selection-background-color: #4C7DFF;
+            }
+        """)
+
+        self.sp_iscilik = QDoubleSpinBox()
+        self.sp_iscilik.setRange(0, 1_000_000)
+        self.sp_iscilik.setDecimals(2)
+        self.sp_iscilik.setSuffix(" ₺")
+        self.sp_iscilik.setStyleSheet("""
+            QDoubleSpinBox {
+                padding: 10px 12px;
+                border-radius: 8px;
+                background: rgba(255,255,255,0.04);
+                border: 1px solid rgba(255,255,255,0.08);
+                color: #E9EDF2;
+                font-size: 14px;
+            }
+            QDoubleSpinBox:focus {
+                border-color: #4C7DFF;
+                background: rgba(76,125,255,0.06);
+            }
+        """)
+
         form.addRow("Ürün", self.cmb_prod)
         form.addRow("Gram", self.in_gram)
         form.addRow("Adet", self.in_adet)
         form.addRow("Birim Fiyat", self.in_price)
+        form.addRow("Milyem", self.cmb_milyem)
+        form.addRow("İşçilik", self.sp_iscilik)
         form.addRow("Not", self.in_note)
         body.addLayout(form)
 
         # Düzenleme modu
         if initial:
-            # ürün koduna göre seçim yap
-            idx = 0
-            for i in range(self.cmb_prod.count()):
-                p = self.cmb_prod.itemData(i)
-                if p and p["Kod"] == initial.get("Kod"):
-                    idx = i; break
-            self.cmb_prod.setCurrentIndex(idx)
-            self.in_gram.setValue(float(initial.get("Gram", 0.0)))
-            self.in_adet.setValue(int(initial.get("Adet", 1)))
-            self.in_price.setValue(float(initial.get("BirimFiyat", 0.0)))
-            self.in_note.setText(initial.get("Not",""))
             title.setText("Satır Düzenle")
+            # Initial değerler artık PREFILL bölümünde yükleniyor
+
+        # --- PREFILL ---
+        self._init_loading = False
+        if initial:
+            self._init_loading = True  # açılışta slotlar çalışmasın
+            try:
+                # 1) ürünü seç (signals kapalı)
+                idx = -1
+                code = initial.get("Kod", "")
+                if code:
+                    for i in range(self.cmb_prod.count()):
+                        p = self.cmb_prod.itemData(i)
+                        if p and p["Kod"] == code:
+                            idx = i; break
+
+                self.cmb_prod.blockSignals(True)
+                if idx >= 0:
+                    self.cmb_prod.setCurrentIndex(idx)
+                self.cmb_prod.blockSignals(False)
+
+                # 2) ÜRÜNÜN DEFAULTLARINI DEĞİL, INITIAL'İ YAZ
+                self.in_gram.setValue(float(initial.get("Gram", self.in_gram.value())))
+                self.in_adet.setValue(int(initial.get("Adet", self.in_adet.value())))
+                # Birim fiyatı siz tabloda formülle hesaplıyorsunuz ama dialogda alan varsa:
+                if "BirimFiyat" in initial:
+                    self.in_price.setValue(float(initial["BirimFiyat"]))
+                if initial.get("Milyem"):
+                    self.cmb_milyem.setCurrentText(str(initial["Milyem"]))
+                self.sp_iscilik.setValue(float(initial.get("Iscilik", 0.0)))
+            finally:
+                self._init_loading = False
 
         self.cmb_prod.currentIndexChanged.connect(self._fill_from_product)
-        self._fill_from_product()
 
         self.btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.btns.accepted.connect(self.accept)
@@ -505,6 +570,10 @@ class NewSaleItemDialog(QDialog):
         v.addWidget(card)
 
     def _fill_from_product(self):
+        # Açılışta veya prefill sırasında tetiklendiyse hiçbir şeyi ezme
+        if getattr(self, "_init_loading", False):
+            return
+        # … burada ürün seçilince default gram/fiyat yazıyorsanız onlar kalsın …
         p = self.cmb_prod.currentData()
         if not p: return
         self.in_gram.setValue(float(p.get("Gram", 0.0)))
@@ -518,6 +587,8 @@ class NewSaleItemDialog(QDialog):
             "Gram": float(self.in_gram.value()),
             "Adet": int(self.in_adet.value()),
             "BirimFiyat": float(self.in_price.value()),
+            "Milyem": self.cmb_milyem.currentText(),
+            "Iscilik": float(self.sp_iscilik.value()),
             "Not": self.in_note.text().strip(),
         }
 
