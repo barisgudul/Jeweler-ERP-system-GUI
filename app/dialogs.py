@@ -12,6 +12,7 @@ from typing import Optional
 TR = QLocale(QLocale.Language.Turkish, QLocale.Country.Turkey)
 
 CATEGORIES = ["Bilezik", "Yüzük", "Kolye", "Külçe", "Gram"]
+ISCILIK_TIPLERI = ["Milyem", "Gram", "TL"]
 
 class NewStockDialog(QDialog):
     def __init__(self, parent=None, initial=None):
@@ -75,6 +76,37 @@ class NewStockDialog(QDialog):
         self.in_kritik_stok.setRange(0, 1_000_000)
         self.in_kritik_stok.setValue(5)  # Varsayılan kritik seviye
 
+        # === YENİ ALANLAR (DOS ekranındakiyle uyumlu) ===
+        self.in_milyem = QDoubleSpinBox()
+        self.in_milyem.setRange(0.00, 1000.00)
+        self.in_milyem.setDecimals(2)
+        self.in_milyem.setSingleStep(1.00)
+        self.in_milyem.setValue(916.00)  # varsayılan: 22K ≈ 916
+
+        self.in_ayar = QSpinBox()
+        self.in_ayar.setRange(0, 24)
+        self.in_ayar.setValue(22)
+
+        self.in_isc_alinan = QDoubleSpinBox()
+        self.in_isc_alinan.setRange(0.00, 1_000_000.00)
+        self.in_isc_alinan.setDecimals(2)
+        self.in_isc_alinan.setSingleStep(0.50)
+
+        self.in_isc_verilen = QDoubleSpinBox()
+        self.in_isc_verilen.setRange(0.00, 1_000_000.00)
+        self.in_isc_verilen.setDecimals(2)
+        self.in_isc_verilen.setSingleStep(0.50)
+
+        self.in_isc_tip = QComboBox()
+        self.in_isc_tip.addItems(ISCILIK_TIPLERI)
+
+        self.in_kdv = QDoubleSpinBox()
+        self.in_kdv.setRange(0.00, 100.00)
+        self.in_kdv.setDecimals(2)
+        self.in_kdv.setSingleStep(1.00)
+        self.in_kdv.setSuffix(" %")
+        self.in_kdv.setValue(20.00)
+
         form.addRow("Kod",   self.in_kod)
         form.addRow("Kategori", self.in_cat)
         form.addRow("Ad",    self.in_ad)
@@ -83,6 +115,13 @@ class NewStockDialog(QDialog):
         form.addRow("Alış Fiyatı", self.in_alis_fiyat)
         form.addRow("Satış Fiyatı", self.in_satis_fiyat)
         form.addRow("Kritik Stok Seviyesi", self.in_kritik_stok)
+        # --- yeni alanlar ---
+        form.addRow("Milyem", self.in_milyem)
+        form.addRow("Ayar", self.in_ayar)
+        form.addRow("Alınan İşç.", self.in_isc_alinan)
+        form.addRow("Verilen İşç.", self.in_isc_verilen)
+        form.addRow("İşçilik Tipi", self.in_isc_tip)
+        form.addRow("K.D.V.", self.in_kdv)
         body.addLayout(form)
 
         # Düzenleme modu
@@ -105,6 +144,14 @@ class NewStockDialog(QDialog):
             except Exception:
                 pass
             self.in_kritik_stok.setValue(int(initial.get("KritikStok", 5)))
+            # yeni alanlar için initial değerler
+            self.in_milyem.setValue(float(initial.get("Milyem", 916)))
+            self.in_ayar.setValue(int(initial.get("Ayar", 22)))
+            self.in_isc_alinan.setValue(float(initial.get("IscAlinan", 0)))
+            self.in_isc_verilen.setValue(float(initial.get("IscVerilen", 0)))
+            if initial.get("IscTip") in ISCILIK_TIPLERI:
+                self.in_isc_tip.setCurrentText(initial["IscTip"])
+            self.in_kdv.setValue(float(initial.get("KDV", 20.0)))
             title.setText("Stok Düzenle")
 
         # Butonlar
@@ -141,6 +188,13 @@ class NewStockDialog(QDialog):
             "AlisFiyat": round(float(self.in_alis_fiyat.value()), 2),
             "SatisFiyat": round(float(self.in_satis_fiyat.value()), 2),
             "KritikStok": int(self.in_kritik_stok.value()),
+            # yeni alanlar
+            "Milyem": round(float(self.in_milyem.value()), 2),
+            "Ayar": int(self.in_ayar.value()),
+            "IscAlinan": round(float(self.in_isc_alinan.value()), 2),
+            "IscVerilen": round(float(self.in_isc_verilen.value()), 2),
+            "IscTip": self.in_isc_tip.currentText(),
+            "KDV": round(float(self.in_kdv.value()), 2),
         }
 
 # --- Yeni: Müşteri diyalogu ---------------------------------------------------
@@ -577,7 +631,7 @@ class NewSaleItemDialog(QDialog):
         p = self.cmb_prod.currentData()
         if not p: return
         self.in_gram.setValue(float(p.get("Gram", 0.0)))
-        self.in_price.setValue(float(p.get("Fiyat", 0.0)))
+        self.in_price.setValue(float(p.get("SatisFiyat", p.get("Fiyat", 0.0))))
 
     def data(self) -> dict:
         p = self.cmb_prod.currentData() or {}

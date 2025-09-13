@@ -11,6 +11,7 @@ from theme import elevate
 from dialogs import NewStockDialog  # dialog
 
 CATEGORIES = ["Tümü", "Bilezik", "Yüzük", "Kolye", "Külçe", "Gram"]
+ISC_TIPS = ["Milyem", "Gram", "TL"]
 
 
 def generate_rows(n=60):
@@ -19,14 +20,22 @@ def generate_rows(n=60):
     for i in range(n):
         alis_fiyat = round(uniform(100, 5000), 2)
         satis_fiyat = round(alis_fiyat * uniform(1.1, 1.5), 2)  # %10-50 kar marjı
+        ayar = 22 if randint(0, 1) else 24
+        milyem = 916.00 if ayar == 22 else 995.00
         rows.append({
             "Kod": f"STK{i+1:04}",
             "Kategori": cats[i % len(cats)],
             "Ad": f"Ürün {i+1}",
+            "Milyem": milyem,
+            "Ayar": ayar,
             "Gram": round(uniform(0.5, 50.0), 2),
             "Adet": randint(1, 25),
             "AlisFiyat": alis_fiyat,
             "SatisFiyat": satis_fiyat,
+            "IscTip": ISC_TIPS[i % len(ISC_TIPS)],
+            "IscAlinan": round(uniform(0, 20), 2),
+            "IscVerilen": round(uniform(0, 20), 2),
+            "KDV": 20.00,
             "KritikStok": randint(2, 10),
         })
     return rows
@@ -99,8 +108,13 @@ class StockPage(QWidget):
         card_layout.setSpacing(10)
 
         # === KOZMİK TABLO ===
-        self.table = QTableWidget(0, 8, self)
-        self.table.setHorizontalHeaderLabels(["Kod", "Kategori", "Ürün Adı", "Gram", "Adet", "Alış Fiyat", "Satış Fiyat", "Toplam Değer"])
+        self.table = QTableWidget(0, 13, self)
+        self.table.setHorizontalHeaderLabels([
+            "Kod","Kategori","Ürün Adı",
+            "Milyem","Ayar","Gram","Adet",
+            "Alış Fiyat","Satış Fiyat",
+            "İşçilik Tipi","Alınan İşç.","Verilen İşç.","KDV %"
+        ])
         self.table.verticalHeader().setVisible(False)
         self.table.setCornerButtonEnabled(False)
         self.table.setAlternatingRowColors(True)
@@ -203,6 +217,10 @@ class StockPage(QWidget):
         self.btn_edit.clicked.connect(self.on_edit)
         self.table.selectionModel().selectionChanged.connect(self._toggle_row_actions)
 
+        # sıralama ve çift tıkla düzenleme
+        self.table.setSortingEnabled(True)
+        self.table.itemDoubleClicked.connect(lambda *_: self.on_edit())
+
         # İlk render sonrası arka planı çiz
         self.resizeEvent(None)
 
@@ -243,14 +261,21 @@ class StockPage(QWidget):
 
     # --- kolon düzeni
     def _apply_column_layout(self):
-        self.header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(0, 100)
-        self.header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(1, 130)
-        self.header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Ürün adı esner
-        self.header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(3, 90)
-        self.header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(4, 80)
-        self.header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(5, 120)
-        self.header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(6, 120)
-        self.header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(7, 120)
+        s = self.header.setSectionResizeMode
+        w = self.table.setColumnWidth
+        s(0, QHeaderView.ResizeMode.Fixed);   w(0, 100)
+        s(1, QHeaderView.ResizeMode.Fixed);   w(1, 120)
+        s(2, QHeaderView.ResizeMode.Stretch)  # Ürün adı esner
+        s(3, QHeaderView.ResizeMode.Fixed);   w(3, 90)   # Milyem
+        s(4, QHeaderView.ResizeMode.Fixed);   w(4, 70)   # Ayar
+        s(5, QHeaderView.ResizeMode.Fixed);   w(5, 90)   # Gram
+        s(6, QHeaderView.ResizeMode.Fixed);   w(6, 70)   # Adet
+        s(7, QHeaderView.ResizeMode.Fixed);   w(7, 120)  # Alış
+        s(8, QHeaderView.ResizeMode.Fixed);   w(8, 120)  # Satış
+        s(9, QHeaderView.ResizeMode.Fixed);   w(9, 110)  # İşçilik Tipi
+        s(10, QHeaderView.ResizeMode.Fixed);  w(10, 110) # Alınan İşç.
+        s(11, QHeaderView.ResizeMode.Fixed);  w(11, 110) # Verilen İşç.
+        s(12, QHeaderView.ResizeMode.Fixed);  w(12, 80)  # KDV %
 
     # --- satır seçim durumuna göre butonlar
     def _toggle_row_actions(self):
@@ -264,15 +289,27 @@ class StockPage(QWidget):
         return idxs[0].row() if idxs else None
 
     def _row_to_dict(self, row):
+        def num(txt): return float(txt.replace(" ₺","").replace(" %","").replace(",","."))
+
+        kod = self.table.item(row, 0).text()
+        # _all_rows içinden gerçek kritik stok
+        ks = next((r.get("KritikStok", 5) for r in self._all_rows if r["Kod"] == kod), 5)
+
         return {
-            "Kod": self.table.item(row, 0).text(),
+            "Kod": kod,
             "Kategori": self.table.item(row, 1).text(),
             "Ad": self.table.item(row, 2).text(),
-            "Gram": float(self.table.item(row, 3).text().replace(",", ".")),
-            "Adet": int(self.table.item(row, 4).text()),
-            "AlisFiyat": float(self.table.item(row, 5).text().replace(" ₺", "").replace(",", ".")),
-            "SatisFiyat": float(self.table.item(row, 6).text().replace(" ₺", "").replace(",", ".")),
-            "KritikStok": int(self.table.item(row, 4).text()),  # Kritik stok adet sütunundan alınacak
+            "Milyem": num(self.table.item(row, 3).text()),
+            "Ayar": int(float(self.table.item(row, 4).text())),
+            "Gram": num(self.table.item(row, 5).text()),
+            "Adet": int(self.table.item(row, 6).text()),
+            "AlisFiyat": num(self.table.item(row, 7).text()),
+            "SatisFiyat": num(self.table.item(row, 8).text()),
+            "IscTip": self.table.item(row, 9).text(),
+            "IscAlinan": num(self.table.item(row,10).text()),
+            "IscVerilen": num(self.table.item(row,11).text()),
+            "KDV": num(self.table.item(row,12).text()),
+            "KritikStok": int(ks),
         }
 
     # --- Yeni
@@ -324,14 +361,14 @@ class StockPage(QWidget):
 
     # --- filtreleme & tablo doldurma
     def apply_filters(self):
-        text = (self.search.text() or "").strip().lower()
+        text = (self.search.text() or "").strip().casefold()
         cat = self.filter.currentText()
 
         filtered = []
         for r in self._all_rows:
             if cat != "Tümü" and r["Kategori"] != cat:
                 continue
-            if text and (text not in r["Kod"].lower() and text not in r["Ad"].lower()):
+            if text and (text not in r["Kod"].casefold() and text not in r["Ad"].casefold()):
                 continue
             filtered.append(r)
 
@@ -340,43 +377,56 @@ class StockPage(QWidget):
         self._toggle_row_actions()
 
     def populate_table(self, rows):
+        # 1) Aktif sıralamayı geçici kapat
+        was_sorted = self.table.isSortingEnabled()
+        if was_sorted:
+            self.table.setSortingEnabled(False)
+
+        # 2) İçeriği temizle ve yeniden doldur
+        self.table.clearContents()
         self.table.setRowCount(len(rows))
+
         for i, r in enumerate(rows):
             self.table.setItem(i, 0, QTableWidgetItem(r["Kod"]))
             self.table.setItem(i, 1, QTableWidgetItem(r["Kategori"]))
             self.table.setItem(i, 2, QTableWidgetItem(r["Ad"]))
 
-            gram_item = QTableWidgetItem(f"{r['Gram']:.2f}")
-            gram_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(i, 3, gram_item)
+            def num_item(val, suffix=""):
+                it = QTableWidgetItem(f"{val:.2f}{suffix}")
+                it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                return it
 
-            adet_item = QTableWidgetItem(str(r["Adet"]))
-            adet_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(i, 3, num_item(r.get("Milyem", 0.0)))
+            it_ayar = QTableWidgetItem(str(r.get("Ayar", 0)))
+            it_ayar.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(i, 4, it_ayar)
 
-            # Kritik stok kontrolü - adet kritik seviyenin altında ise kırmızı arka plan
+            self.table.setItem(i, 5, num_item(r["Gram"]))
+
+            it_adet = QTableWidgetItem(str(r["Adet"]))
+            it_adet.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if r["Adet"] <= r.get("KritikStok", 5):
-                adet_item.setBackground(QColor(244, 67, 54, 60))  # Kırmızı arka plan
-                adet_item.setForeground(QColor(255, 255, 255))  # Beyaz yazı
-            self.table.setItem(i, 4, adet_item)
+                it_adet.setBackground(QColor(244, 67, 54, 60))
+                it_adet.setForeground(QColor(255, 255, 255))
+            self.table.setItem(i, 6, it_adet)
 
-            # Alış fiyatı
-            alis_item = QTableWidgetItem(f"{r.get('AlisFiyat', 0):.2f} ₺")
-            alis_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(i, 5, alis_item)
+            self.table.setItem(i, 7, num_item(r.get("AlisFiyat", 0.0), " ₺"))
+            self.table.setItem(i, 8, num_item(r.get("SatisFiyat", 0.0), " ₺"))
 
-            # Satış fiyatı
-            satis_item = QTableWidgetItem(f"{r.get('SatisFiyat', 0):.2f} ₺")
-            satis_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(i, 6, satis_item)
+            it_tip = QTableWidgetItem(r.get("IscTip","Milyem"))
+            it_tip.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(i, 9, it_tip)
 
-            # Toplam değer hesaplaması (Adet × Satış Fiyatı)
-            toplam_deger = r["Adet"] * r.get('SatisFiyat', 0)
-            deger_item = QTableWidgetItem(f"{toplam_deger:.2f} ₺")
-            deger_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if r["Adet"] <= r.get("KritikStok", 5):
-                deger_item.setBackground(QColor(244, 67, 54, 60))  # Kritik stok ise kırmızı
-                deger_item.setForeground(QColor(255, 255, 255))
-            self.table.setItem(i, 7, deger_item)
+            self.table.setItem(i,10, num_item(r.get("IscAlinan", 0.0), " ₺"))
+            self.table.setItem(i,11, num_item(r.get("IscVerilen", 0.0), " ₺"))
+            self.table.setItem(i,12, num_item(r.get("KDV", 0.0), " %"))
+
+        # 3) Sıralamayı eski haline getir (varsa tekrar sırala)
+        if was_sorted:
+            self.table.setSortingEnabled(True)
+            sec = self.header.sortIndicatorSection()
+            order = self.header.sortIndicatorOrder()
+            self.table.sortItems(sec, order)
 
     def update_summary(self, rows):
         toplam_gram = sum(r["Gram"] for r in rows)
