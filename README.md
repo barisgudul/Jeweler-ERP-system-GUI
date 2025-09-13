@@ -2,8 +2,6 @@
 
 <div align="center">
 
-![OrbitX Logo](app/assets/logo.png)
-
 **Comprehensive ERP System for Modern Jewelry Businesses**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
@@ -37,7 +35,6 @@
   - [🤝 Contributing](#-contributing)
   - [📄 License](#-license)
   - [🙏 Acknowledgments](#-acknowledgments)
-  - [📞 Contact](#-contact)
 
 ---
 
@@ -73,20 +70,21 @@
 
 ```mermaid
 graph TB
-    A[PyQt6 GUI Framework] --> B[OrbitX Jewelry ERP]
-    C[ReportLab PDF Engine] --> B
-    D[QSS Theme System] --> B
-    E[Future DB Layer (SQLite planned)] --> B
-    F[DejaVu Fonts] --> B
+  A["PyQt6 GUI Framework"] --> B["OrbitX Jewelry ERP"]
+  C["ReportLab PDF Engine"] --> B
+  D["QSS Theme System"] --> B
+  E["Future DB Layer (SQLite planned)"] --> B
+  F["DejaVu Fonts"] --> B
 
-    B --> G[Login System]
-    B --> H[Dashboard]
-    B --> I[Stock Management]
-    B --> J[Customer Accounts]
-    B --> K[Sales Transactions]
-    B --> L[Finance]
-    B --> M[Reports]
-    B --> N[Parameters]
+  B --> G["Login System"]
+  B --> H["Dashboard"]
+  B --> I["Stock Management"]
+  B --> J["Customer Accounts"]
+  B --> K["Sales Transactions"]
+  B --> L["Finance"]
+  B --> M["Reports"]
+  B --> N["Parameters"]
+
 ```
 
 ### 📁 Project Structure
@@ -705,15 +703,6 @@ See [LICENSE](LICENSE) for details.
 - **Material Design**: Modern UI principles
 - **Cosmic Theme**: Science fiction aesthetics
 - **Turkish UX**: Local user experience
-
----
-
-## 📞 Contact
-
-Have questions about the **OrbitX Jewelry ERP** project?
-
-- 🐛 **Issues**: [GitHub Issues](https://github.com/your-username/OrbitX_Jewelry_ERP/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/your-username/OrbitX_Jewelry_ERP/discussions)
 
 ---
 
