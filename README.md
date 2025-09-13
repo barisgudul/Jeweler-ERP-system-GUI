@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![OrbitX Logo](assets/logo.png)
+![OrbitX Logo](app/assets/logo.png)
 
 **Comprehensive ERP System for Modern Jewelry Businesses**
 
