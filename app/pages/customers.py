@@ -13,6 +13,7 @@ import os
 
 from theme import elevate
 from dialogs import NewCustomerDialog
+from .parameters import fmt_money, fmt_date
 
 # TR yerel para
 TR = QLocale(QLocale.Language.Turkish, QLocale.Country.Turkey)
@@ -43,11 +44,13 @@ def generate_customers(n=24):
     return rows
 
 class CustomersPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, data=None, parent=None):
         super().__init__(parent)
-
-        self._all_rows = generate_customers()
-        self._filtered = list(self._all_rows)
+        self.data = data
+        self._all_rows = []
+        self._filtered = []
+        if self.data:
+            self.reload_from_db()
 
         # === KOZMİK ARKA PLAN ===
         self._sky = QLabel(self)
@@ -65,7 +68,7 @@ class CustomersPage(QWidget):
         title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
         header.addWidget(title, 0, Qt.AlignmentFlag.AlignLeft)
 
-        hint = QLabel("Müşteri listesi, arama/filtre ve dışa aktarma • mock veri")
+        hint = QLabel("Müşteri listesi, arama/filtre ve dışa aktarma • veritabanı")
         hint.setProperty("variant", "muted")
         header.addWidget(hint, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(header)
@@ -401,6 +404,14 @@ class CustomersPage(QWidget):
         self.btn_del.setEnabled(has)
 
     def apply_filters(self):
+        # UI öğeleri henüz yüklenmemişse çık
+        if not hasattr(self, 'search') or not hasattr(self, 'filter') or not hasattr(self, 'table'):
+            self._filtered = list(self._all_rows)
+            if hasattr(self, 'table'):
+                self.populate(self._filtered)
+                self.update_summary(self._filtered)
+            return
+
         text = (self.search.text() or "").strip().lower()
         f = self.filter.currentText()
 
@@ -436,7 +447,16 @@ class CustomersPage(QWidget):
             self.table.setItem(i, 5, QTableWidgetItem(r["Durum"]))
 
     def update_summary(self, rows):
-        self.summary.setText(f"Toplam müşteri: {len(rows)} adet")
+        total_customers = len(rows)
+        total_balance = sum(float(row.get("Bakiye", 0.0)) for row in rows)
+        active_customers = sum(1 for row in rows if row.get("Durum") == "Aktif")
+        debtor_count = sum(1 for row in rows if float(row.get("Bakiye", 0.0)) < 0)
+
+        summary_text = (
+            f"Toplam Cari: {total_customers} • Aktif: {active_customers} • "
+            f"Borçlu Cari: {debtor_count} • Genel Bakiye: {tl(total_balance)}"
+        )
+        self.summary.setText(summary_text)
 
     def _create_balance_card(self, balance: float, parent=None) -> QFrame:
         """Müşterinin bakiye durumunu gösteren profesyonel kart"""
@@ -632,20 +652,19 @@ class CustomersPage(QWidget):
         summary_layout = QVBoxLayout(summary_frame)
         summary_layout.setSpacing(6)
 
-        # Özet bilgileri
-        satis_toplam_30gun = sum(t[2] for t in transactions if t[2] > 0)
-        alis_toplam_30gun = sum(abs(t[2]) for t in transactions if t[2] < 0)
+        # Özet bilgileri - DB'den çekilecek
         hareket_sayisi = len(transactions)
 
         lbl_summary_title = QLabel("Son 30 Gün Özeti")
         lbl_summary_title.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         lbl_summary_title.setStyleSheet("color: #E9EDF2; margin-bottom: 4px;")
 
-        lbl_satis = QLabel(f"Satış: {tl(satis_toplam_30gun)}")
-        lbl_satis.setStyleSheet("color: #F44336; font-size: 12px;")
+        # Sınıf değişkenleri olarak sakla
+        self.lbl_sum_satis = QLabel("Satış: 0 ₺")
+        self.lbl_sum_satis.setStyleSheet("color: #F44336; font-size: 12px;")
 
-        lbl_alis = QLabel(f"Alış: {tl(alis_toplam_30gun)}")
-        lbl_alis.setStyleSheet("color: #4CAF50; font-size: 12px;")
+        self.lbl_sum_alis = QLabel("Alış: 0 ₺")
+        self.lbl_sum_alis.setStyleSheet("color: #4CAF50; font-size: 12px;")
 
         lbl_count = QLabel(f"Hareket Sayısı: {hareket_sayisi}")
         lbl_count.setStyleSheet("color: #B7C0CC; font-size: 12px;")
@@ -654,13 +673,30 @@ class CustomersPage(QWidget):
         lbl_phone.setStyleSheet("color: #B7C0CC; font-size: 12px;")
 
         summary_layout.addWidget(lbl_summary_title)
-        summary_layout.addWidget(lbl_satis)
-        summary_layout.addWidget(lbl_alis)
+        summary_layout.addWidget(self.lbl_sum_satis)
+        summary_layout.addWidget(self.lbl_sum_alis)
         summary_layout.addWidget(lbl_count)
         summary_layout.addWidget(lbl_phone)
 
         self.drawer_layout.addWidget(summary_frame)
         self.drawer_layout.addStretch(1)  # Boşluğu alta iter
+
+        # DB'den veri çek ve güncelle
+        if self.data:
+            # Müşteri ID'sini bul
+            customer_id = None
+            for customer in self._all_rows:
+                if customer["Kod"] == kod:
+                    # ID'yi bulmak için customers tablosunda ara
+                    row = self.data.db.cx.execute("SELECT id FROM customers WHERE name=? AND phone=?",
+                                                 (customer["AdSoyad"], customer["Telefon"])).fetchone()
+                    if row:
+                        customer_id = row["id"]
+                    break
+
+            if customer_id:
+                self._load_customer_activity(customer_id)
+                self._load_customer_30day_summary(customer_id)
 
     # CRUD (mock)
     def on_new(self):
@@ -734,3 +770,64 @@ class CustomersPage(QWidget):
             self.summary.setText(self.summary.text() + " • PDF: exports/cari_listesi.pdf")
         except Exception as e:
             self.summary.setText("PDF aktarımında hata: " + str(e))
+
+    def reload_from_db(self):
+        """DB'den cari verilerini çek ve tabloyu güncelle"""
+        if not self.data:
+            return
+        rows = self.data.list_customers()
+        self._all_rows = [{
+           "Kod": r.get("code") or f"CAR{r['id']:04}",
+           "AdSoyad": r["name"] or "", "Telefon": r.get("phone") or "",
+           "Bakiye": r.get("balance", 0.0), "Son İşlem": (r.get("last_txn_at") or "")[:10],
+           "Durum": r.get("status") or "Aktif"
+        } for r in rows]
+        self._filtered = list(self._all_rows)
+        # UI öğeleri yüklenene kadar populate'u doğrudan çağır
+        if hasattr(self, 'search') and hasattr(self, 'filter') and hasattr(self, 'table'):
+            self.apply_filters()
+        else:
+            if hasattr(self, 'table'):
+                self.populate(self._filtered)
+                self.update_summary(self._filtered)
+
+    def _load_customer_activity(self, customer_id: int):
+        """Son hareketleri DB'den çek ve tabloya doldur"""
+        if not self.data:
+            return
+        # Son hareketler: sales tablosundan
+        rows = self.data.db.cx.execute("""
+            SELECT date, type, total FROM sales
+            WHERE customer_id = ?
+            ORDER BY date DESC, id DESC
+            LIMIT 50
+        """, (customer_id,)).fetchall()
+
+        if hasattr(self, 'transactions_table'):
+            self.transactions_table.setRowCount(len(rows))
+            for r, row in enumerate(rows):
+                self.transactions_table.setItem(r, 0, QTableWidgetItem(fmt_date(row["date"])))
+                self.transactions_table.setItem(r, 1, QTableWidgetItem(row["type"]))
+                self.transactions_table.setItem(r, 2, QTableWidgetItem(fmt_money(float(row["total"]))))
+
+    def _load_customer_30day_summary(self, customer_id: int):
+        """30-gün özetini DB'den çek ve etiketlere doldur"""
+        if not self.data:
+            return
+        row = self.data.db.cx.execute("""
+            SELECT
+              COALESCE(SUM(CASE WHEN type='Satış' THEN total END), 0) AS sum_satis,
+              COALESCE(SUM(CASE WHEN type='Alış'  THEN total END), 0) AS sum_alis
+            FROM sales
+            WHERE customer_id = ?
+              AND date >= date('now','-30 day')
+        """, (customer_id,)).fetchone()
+
+        if hasattr(self, 'lbl_sum_satis') and hasattr(self, 'lbl_sum_alis'):
+            self.lbl_sum_satis.setText(fmt_money(row["sum_satis"]))
+            self.lbl_sum_alis.setText(fmt_money(row["sum_alis"]))
+
+    def on_transaction_from_sales(self, payload: dict):
+        """Satış işleminden sonra cari tablosunu güncelle"""
+        if hasattr(self, 'table'):
+            self.reload_from_db()

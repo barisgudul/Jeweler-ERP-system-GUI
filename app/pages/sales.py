@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate, QLocale, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QLinearGradient, QColor, QPalette
 import os
+from .parameters import parse_money, fmt_money, TR
 
 # PDF oluşturma için gerekli import'lar
 try:
@@ -767,13 +768,23 @@ class ItemDetailDialog(QDialog):
         }
 
 class SalesPage(QWidget):
-    """Alış–Satış işlemleri (frontend/mock)"""
+    """Alış–Satış işlemleri (DB entegrasyonu ile)"""
 
     # Finans sayfası dinleyebilsin diye sinyal
     transactionCommitted = pyqtSignal(dict)  # payload: finans kaydı
 
-    def __init__(self, parent=None):
+    def __init__(self, data=None, parent=None):
         super().__init__(parent)
+        self.data = data
+
+        # Seed (bir kere)
+        try:
+            from pages.sales import PRODUCTS, CUSTOMERS  # senin dosyadaki listeler
+        except Exception:
+            PRODUCTS, CUSTOMERS = [], []
+        if self.data:
+            self.data.seed_if_empty(CUSTOMERS, PRODUCTS)
+
 
         # — kozmik arka plan
         self._sky = QLabel(self)
@@ -1610,6 +1621,14 @@ class SalesPage(QWidget):
             self.lbl_remaining.setVisible(False)
             self.lbl_change.setVisible(True)
             paid = float(self.in_paid.value())
+
+            # Otomatik doldurma: kullanıcı hiç yazmadıysa (0.00) total'i öner
+            if total > 0 and paid == 0.0:
+                self.in_paid.blockSignals(True)
+                self.in_paid.setValue(total)
+                self.in_paid.blockSignals(False)
+                paid = total
+
             if paid < total and paid > 0:
                 # Eksik ödeme durumunda kırmızı uyarı
                 self.lbl_change.setText(f"Eksik: {tl(total - paid)}")
@@ -1731,8 +1750,28 @@ class SalesPage(QWidget):
         # SON: bu satırı formüle göre fiyatla
         self._refresh_row_pricing(r)
 
+    def _row_to_item(self, r: int) -> dict:
+        """Tablo satırını DB item dict'ine çevir"""
+        def to_float(txt):
+            return parse_money(txt)
+
+        code = self.table.item(r, 0).text()
+        name = self.table.item(r, 1).text()
+        gram = float(self.table.item(r, 2).text() or 0)
+        qty = int(self.table.item(r, 3).text() or 1)
+        milyem = self.table.item(r, 4).text() or ""
+        isc_item = self.table.item(r, 5)
+        iscilik = isc_item.data(Qt.ItemDataRole.UserRole) if isc_item else 0.0
+        unit_price = to_float(self.table.item(r, 6).text())
+        line_total = to_float(self.table.item(r, 7).text())
+
+        return {
+            "code": code, "name": name, "gram": gram, "qty": qty, "milyem": milyem,
+            "iscilik": float(iscilik or 0.0), "unit_price": unit_price, "line_total": line_total
+        }
+
     def save_transaction(self):
-        """İşlemi kaydet ve formu temizle"""
+        """DB'ye işlemleri kaydet"""
         if self.table.rowCount() == 0:
             QMessageBox.warning(self, "Uyarı", "Kaydedilecek satır bulunamadı!")
             return
@@ -1740,52 +1779,69 @@ class SalesPage(QWidget):
             QMessageBox.warning(self, "Uyarı", "Lütfen bir cari seçin.")
             return
 
-        # Eksik ödeme kontrolü (Nakit/Kart/Havale için)
+        # Etkin ödeme hesapla
         total_amount = self._calc_total()
-        paid_amount = float(self.in_paid.value()) if self.cmb_pay.currentText() != "Veresiye" else total_amount
+        paid_req = float(self.in_paid.value()) if self.cmb_pay.currentText() != "Veresiye" else 0.0
+        paid_eff = min(paid_req, total_amount)  # para üstü hariç net tahsilat
 
-        if self.cmb_pay.currentText() != "Veresiye" and paid_amount < total_amount:
+        if self.cmb_pay.currentText() != "Veresiye" and paid_req < total_amount:
             reply = QMessageBox.question(self, "Eksik Ödeme Onayı",
                 f"Ödeme tutarı toplam tutardan az!\n\n"
                 f"Toplam Tutar: {tl(total_amount)}\n"
-                f"Ödenen Tutar: {tl(paid_amount)}\n"
-                f"Eksik Tutar: {tl(total_amount - paid_amount)}\n\n"
+                f"Ödenen Tutar: {tl(paid_req)}\n"
+                f"Eksik Tutar: {tl(total_amount - paid_req)}\n\n"
                 f"İşlemi eksik ödeme ile kaydetmek istiyor musunuz?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        # İşlem özeti
-        transaction_type = self.cmb_type.currentText()
-        customer = self.cmb_customer.currentText()
-        total = self.lbl_sum_total.text().strip()
+        # DB'ye kaydet
+        if not self.data:
+            QMessageBox.critical(self, "Hata", "Veritabanı bağlantısı yok!")
+            return
 
-        # — YENİ: önce finans payload oluşturup gönder
-        payload = self._build_finance_payload()
-        self._post_to_finance(payload)
+        items = [self._row_to_item(r) for r in range(self.table.rowCount())]
+        header = {
+            "type": self.cmb_type.currentText(),  # 'Satış' | 'Alış'
+            "doc_no": self.in_docno.text().strip(),
+            "date": self.in_date.date().toString("yyyy-MM-dd"),
+            "notes": self.in_notes.text().strip(),
+            "customer_text": self.cmb_customer.currentText().strip(),
+            "pay_type": self.cmb_pay.currentText().strip() if hasattr(self, "cmb_pay") else "Nakit",
+            "paid_amount": paid_eff,
+            "discount": float(getattr(self, "_discount", 0.0))
+        }
 
-        # — YENİ: makbuz otomatik yazdır (./receipts/…)
-        self._auto_generate_receipt_pdf()
+        try:
+            payload = self.data.create_sale(header, items)
+            self.transactionCommitted.emit(payload)
+            QMessageBox.information(self, "Başarılı", "İşlem kaydedildi.")
 
-        # bilgilendir
-        if self.cmb_pay.currentText() == "Veresiye":
-            remaining = self.lbl_remaining.text().strip()
-            QMessageBox.information(self, "Veresiye İşlemi",
-                                  f"{transaction_type} işlemi kaydedildi.\n"
-                                  f"Cari: {customer}\n"
-                                  f"Toplam Tutar: {total}\n"
-                                  f"{remaining}\n\n"
-                                  f"İşlem finans kayıtlarına eklendi ve makbuz oluşturuldu.")
-        else:
-            QMessageBox.information(self, "İşlem Başarılı",
-                                  f"{transaction_type} işlemi başarıyla kaydedildi!\n"
-                                  f"Cari: {customer}\n"
-                                  f"Toplam Tutar: {total}\n\n"
-                                  f"İşlem finans kayıtlarına eklendi ve makbuz oluşturuldu.")
+            # Makbuz otomatik oluştur
+            self._auto_generate_receipt_pdf()
 
-        # Formu temizle - yeni işlem için hazırla
-        self._clear_form()
+            # Formu temizle
+            self.clear_form_for_new_sale()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Hata", f"İşlem kaydedilemedi:\n{e}")
+
+    def clear_form_for_new_sale(self):
+        """Yeni satış için formu temizle"""
+        self.table.setRowCount(0)
+        self.in_notes.clear()
+        self.in_paid.setValue(0)
+        self.lbl_sum_count.setText("0")
+        self.lbl_sum_sub.setText(tl(0))
+        self.lbl_sum_total.setText(tl(0))
+        self.lbl_change.setText(f"Para Üstü: {tl(0)}")
+        self.lbl_remaining.setText(f"Kalan (Veresiye): {tl(0)}")
+
+        # Yeni belge numarası oluştur
+        import random
+        doc_no = f"SL{f'{random.randint(1, 9999):04d}'}"
+        self.in_docno.setText(doc_no)
 
     def generate_receipt_pdf(self):
         """PDF makbuz oluştur"""
@@ -1818,8 +1874,10 @@ class SalesPage(QWidget):
 
         # PDF dosya adı oluştur
         from PyQt6.QtWidgets import QFileDialog
+        d = self.in_date.date().toString("yyyyMMdd")
+        cust = self._safe_name(self.cmb_customer.currentText().split(" — ")[0])
         file_name, _ = QFileDialog.getSaveFileName(
-            self, "Makbuz Kaydet", f"makbuz_{self.in_docno.text()}.pdf",
+            self, "Makbuz Kaydet", f"makbuz_{d}_{cust}_{self.in_docno.text()}.pdf",
             "PDF Dosyaları (*.pdf)"
         )
 
@@ -1983,6 +2041,12 @@ class SalesPage(QWidget):
         self.in_docno.setText(doc_no)
 
     # === MAKBUZ OTO KAYIT ===
+    def _safe_name(self, s: str) -> str:
+        """Dosya adı için güvenli isim oluştur"""
+        import re
+        s = re.sub(r"[^0-9A-Za-zÇĞİÖŞÜçğıöşü\s\-]+", "", s).strip()
+        return re.sub(r"\s+", "_", s)
+
     def _auto_generate_receipt_pdf(self, file_path: str|None=None):
         """Kullanıcıya sormadan PDF makbuz üretir. Yol verilmezse ./receipts/SLxxxx.pdf'e kaydeder."""
         if not PDF_AVAILABLE:
@@ -1994,7 +2058,9 @@ class SalesPage(QWidget):
             # ./receipts klasörü
             base_dir = os.path.join(os.getcwd(), "receipts")
             os.makedirs(base_dir, exist_ok=True)
-            file_path = os.path.join(base_dir, f"makbuz_{self.in_docno.text()}.pdf")
+            d = self.in_date.date().toString("yyyyMMdd")
+            cust = self._safe_name(self.cmb_customer.currentText().split(" — ")[0])
+            file_path = os.path.join(base_dir, f"makbuz_{d}_{cust}_{self.in_docno.text()}.pdf")
 
         # Aşağıda, mevcut generate_receipt_pdf ile aynı içerik üretimini KISACA kullanıyoruz.
         # En güvenlisi: generate_receipt_pdf'i parametreli hale getirip tekrar kullanmak.

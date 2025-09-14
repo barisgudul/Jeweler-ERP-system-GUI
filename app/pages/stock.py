@@ -42,9 +42,14 @@ def generate_rows(n=60):
 
 
 class StockPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, data=None, parent=None):
         super().__init__(parent)
-        self._all_rows = generate_rows(80)
+        self.data = data
+        self._all_rows = []
+        self._filtered = []
+        if self.data:
+            self.data.stockChanged.connect(self.reload_from_db)
+            self.reload_from_db()
 
         # === KOZMİK ARKA PLAN ===
         self._sky = QLabel(self)
@@ -62,7 +67,7 @@ class StockPage(QWidget):
         title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
         header.addWidget(title, 0, Qt.AlignmentFlag.AlignLeft)
 
-        hint = QLabel("Arama, kategori filtresi ve özet • mock veri")
+        hint = QLabel("Arama, kategori filtresi ve özet • veritabanı")
         hint.setProperty("variant", "muted")
         header.addWidget(hint, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(header)
@@ -361,6 +366,14 @@ class StockPage(QWidget):
 
     # --- filtreleme & tablo doldurma
     def apply_filters(self):
+        # UI öğeleri henüz yüklenmemişse çık
+        if not hasattr(self, 'search') or not hasattr(self, 'filter') or not hasattr(self, 'table'):
+            self._filtered = list(self._all_rows)
+            if hasattr(self, 'table'):
+                self.populate_table(self._filtered)
+                self.update_summary(self._filtered)
+            return
+
         text = (self.search.text() or "").strip().casefold()
         cat = self.filter.currentText()
 
@@ -441,3 +454,30 @@ class StockPage(QWidget):
             f"Stok Değeri: {toplam_deger:.2f} ₺ • Potansiyel Kâr: {kar_potential:.2f} ₺ • "
             f"Kritik Stok: {kritik_stok_sayisi} ürün"
         )
+
+    def reload_from_db(self):
+        """DB'den stok verilerini çek ve tabloyu güncelle"""
+        if not self.data:
+            return
+        rows = self.data.list_stock()
+        self._all_rows = [{
+            "Kod": r["code"] or "", "Kategori": r["category"] or "", "Ad": r["name"] or "",
+            "Milyem": r["milyem"] or 0, "Ayar": r["ayar"] or 0, "Gram": r["gram"] or 0.0,
+            "Adet": r["qty"] or 0, "AlisFiyat": r["buy_price"] or 0.0, "SatisFiyat": r["sell_price"] or 0.0,
+            "IscTip": r["isc_tip"] or "", "IscAlinan": r["isc_alinan"] or 0.0, "IscVerilen": r["isc_verilen"] or 0.0,
+            "KDV": r["vat"] or 0.0, "KritikStok": r["critical_qty"] or 5
+        } for r in rows]
+        self._filtered = list(self._all_rows)
+        # UI öğeleri yüklenene kadar populate_table'ı doğrudan çağır
+        if hasattr(self, 'search') and hasattr(self, 'filter') and hasattr(self, 'table'):
+            self.apply_filters()
+        else:
+            # UI öğeleri henüz yüklenmemişse sadece veri yapısını hazırla
+            if hasattr(self, 'table'):
+                self.populate_table(self._filtered)
+                self.update_summary(self._filtered)
+
+    def on_transaction_from_sales(self, payload: dict):
+        """Satış işleminden sonra stok tablosunu güncelle"""
+        if hasattr(self, 'table'):
+            self.reload_from_db()

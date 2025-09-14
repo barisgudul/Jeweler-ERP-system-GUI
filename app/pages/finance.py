@@ -10,8 +10,7 @@ from PyQt6.QtGui import QFont, QPixmap, QPainter, QLinearGradient, QColor, QPale
 from random import randint, choice
 from theme import elevate, apply_dialog_theme
 from dialogs import ExpenseVoucherDialog
-
-TR = QLocale(QLocale.Language.Turkish, QLocale.Country.Turkey)
+from .parameters import parse_money, fmt_money, fmt_date, fmt_time, TR
 
 # Mock cari hesap listesi
 CUSTOMERS_FOR_FINANCE = [
@@ -252,8 +251,12 @@ def _kpi(title: str, value: str, sub: str = "") -> tuple[QFrame, QLabel]:
 # --- ana sayfa ----------------------------------------------------------------
 class FinancePage(QWidget):
     """Kasa & Finans (frontend/mock) — kozmik tema, orantılı yerleşim"""
-    def __init__(self, parent=None):
+    def __init__(self, data=None, parent=None):
         super().__init__(parent)
+        self.data = data
+        if self.data:
+            self.data.cashChanged.connect(self.reload_from_db)
+            self.reload_from_db()
 
         # Prefs durum bayrakları
         self._loading_prefs = False
@@ -916,6 +919,8 @@ class FinancePage(QWidget):
         self.lbl_sum_net.setText(tl(net))
 
     def _toggle_right_actions(self):
+        if not hasattr(self, 'table') or not hasattr(self, 'btn_edit'):
+            return
         sm = self.table.selectionModel()
         has = bool(sm and sm.selectedRows())
         self.btn_edit.setEnabled(has)
@@ -972,6 +977,9 @@ class FinancePage(QWidget):
         return True
 
     def _refresh_table(self):
+        # UI öğeleri hazır değilse çık
+        if not hasattr(self, 'table'):
+            return
         # Tablo sıralamasını geçici olarak kapat (veri yükleme sırasında)
         sorting_enabled = self.table.isSortingEnabled()
         if sorting_enabled:
@@ -982,25 +990,30 @@ class FinancePage(QWidget):
         self.table.setRowCount(len(vis))
 
         for i, r in enumerate(vis):
-            it_date = QTableWidgetItem(r["tarih"])
+            # Tarih formatını düzelt (yyyy-MM-dd → dd.MM.yyyy)
+            tarih_fmt = fmt_date(r["tarih"])
+            it_date = QTableWidgetItem(tarih_fmt)
             it_date.setData(Qt.ItemDataRole.UserRole, r["id"])
             # Sıralama için tarih+saat'i UserRole'a koy (PyQt6'da SortRole yok)
-            dt = QDateTime.fromString(f"{r['tarih']} {r['saat']}", "dd.MM.yyyy HH:mm")
+            dt = QDateTime.fromString(f"{r['tarih']} {r['saat']}", "yyyy-MM-dd HH:mm")
             it_date.setData(Qt.ItemDataRole.UserRole + 1, dt)  # UserRole + 1 kullan
             self.table.setItem(i, 0, it_date)
 
-            self.table.setItem(i, 1, QTableWidgetItem(r["saat"]))
+            self.table.setItem(i, 1, QTableWidgetItem(fmt_time(r["saat"])))
             self.table.setItem(i, 2, QTableWidgetItem(r["hesap"]))
             self.table.setItem(i, 3, QTableWidgetItem(r["tur"]))
             self.table.setItem(i, 4, QTableWidgetItem(r["kategori"]))
 
-            # açıklama hücresine tooltip olarak cari adını göster
-            desc_item = QTableWidgetItem(r["aciklama"])
+            # açıklama hücresine müşteri adını dahil et
+            desc_text = r["aciklama"]
             if r.get("cari"):
-                desc_item.setToolTip(f"İlişkili Cari: {r['cari']}")
+                desc_text = f'{r["aciklama"]} — {r["cari"]}'
+            desc_item = QTableWidgetItem(desc_text)
+            desc_item.setToolTip(f"İlişkili Cari: {r.get('cari', '—')}")
             self.table.setItem(i, 5, desc_item)
 
-            it = QTableWidgetItem(tl(abs(r["tutar"])))
+            # Tutarı fmt_money ile formatla
+            it = QTableWidgetItem(fmt_money(abs(r["tutar"])))
             it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             it.setForeground(QColor(120,200,140) if r["tutar"] >= 0 else QColor(220,120,120))
             # (istersen tutarı da UserRole'a numeric ver)
@@ -1018,6 +1031,9 @@ class FinancePage(QWidget):
         self.table.sortItems(0, Qt.SortOrder.DescendingOrder)
 
     def _recalc_summary(self, rows: list[dict]):
+        # UI öğeleri hazır değilse çık
+        if not hasattr(self, 'lbl_sum_in'):
+            return
         total_in  = sum(r["tutar"] for r in rows if r["tutar"] > 0)
         total_out = -sum(r["tutar"] for r in rows if r["tutar"] < 0)
         net = total_in - total_out
@@ -1425,57 +1441,48 @@ class FinancePage(QWidget):
         return ""
 
     def add_row_from_sales(self, payload: dict):
-        """Sales sayfasından gelen işlemi finans defterine ekle (MODELE yazar)."""
+        """Sales sayfasından gelen işlemi finans defterine ekle"""
         try:
-            # Tarih biçimini düzelt (dd.MM.yyyy veya yyyy-MM-dd destekle)
-            tarih_str = payload.get("tarih", "")
-            qd = QDate.fromString(tarih_str, "dd.MM.yyyy")
-            if not qd.isValid():
-                qd = QDate.fromString(tarih_str, "yyyy-MM-dd")
-            tarih = qd.toString("dd.MM.yyyy") if qd.isValid() else tarih_str
-
-            # Saat: mevcut an
-            saat = QTime.currentTime().toString("HH:mm")
-
-            # Tür/kategori ve tutar işareti
-            tur = "Giriş" if payload.get("tip") == "Gelir" else "Çıkış"
-            kategori = "Satış Tahsilatı" if tur == "Giriş" else "Tedarikçi Ödemesi"
-            tutar = float(payload.get("tutar", 0.0))
-            tutar = tutar if tur == "Giriş" else -tutar
-
-            # Hesap: ödeme türüne göre mantıklı varsayılan
-            odeme = (payload.get("odeme_turu") or "").lower()
-            hesap = "Banka — VakıfBank" if any(k in odeme for k in ["havale","eft","banka"]) else "Kasa"
-
-            # Cari
+            # Cari bilgisini hafızada tut (yeni kayıt diyaloğu için)
             cari_raw = payload.get("cari", "")
             cari_disp = self._resolve_customer_display(cari_raw)
-
-            # Açıklama (cari zaten ayrı saklanıyor, açıklamayı kısa tut)
-            aciklama = f"{payload.get('belge_no','')} — {payload.get('aciklama','') or payload.get('kategori','')}"
-
-            # MODELE ekle
-            rec = {
-                "id": self._seq,
-                "tarih": tarih, "saat": saat,
-                "hesap": hesap, "tur": tur, "kategori": kategori,
-                "aciklama": aciklama, "tutar": tutar,
-                "cari": cari_disp or cari_raw,   # modelde cari'yi TUT
-            }
-            self._rows.append(rec)
-            self._seq += 1
-
-            # >>> EK: son satış carisini hafızada tut
             self._last_sales_customer_display = cari_disp or cari_raw
 
-            # Görünümü güncelle ve eklenen satırı seç
-            self._refresh_table()
-            QTimer.singleShot(50, lambda: self._select_id_in_table(rec["id"]))
+            # Veritabanı tek gerçektir; DataService.cashChanged zaten yayılıyor
+            # Sadece hızlı senkron için DB'den çek:
+            self.reload_from_db()
 
-            print(f"Finans kaydı eklendi: {payload.get('belge_no','')} - {tl(abs(tutar))}")
+            print(f"Satış işlemi eklendi: {payload.get('doc_no','')}")
 
         except Exception as e:
-            print(f"Finans kaydı ekleme hatası: {e}")
+            print(f"Satış işlemi ekleme hatası: {e}")
+
+    def reload_from_db(self):
+        if not self.data: return
+        # Customer bilgisi ile birlikte çek
+        rows = self.data.db.cx.execute("""
+            SELECT c.id, c.date, c.time, c.account, c.type, c.category, c.description,
+                   c.amount, cu.name AS customer_name
+            FROM cash_ledger c
+            LEFT JOIN customers cu ON cu.id = c.customer_id
+            ORDER BY c.date DESC, c.time DESC;
+        """).fetchall()
+
+        self._rows = []
+        for r in rows:
+            # sqlite3.Row nesneleri için dict() kullan
+            row_dict = dict(r)
+            self._rows.append({
+                "id": row_dict["id"], "tarih": row_dict["date"], "saat": row_dict.get("time") or "",
+                "hesap": row_dict["account"], "tur": row_dict["type"], "kategori": row_dict.get("category") or "",
+                "aciklama": row_dict.get("description") or "", "tutar": (row_dict["amount"] if row_dict["type"]=="Giriş" else -row_dict["amount"]),
+                "cari": row_dict.get("customer_name") or "",  # müşteri adı
+            })
+
+        # Tabloyu ve özetleri yenile - ancak UI öğeleri hazır olduğunda
+        if hasattr(self, 'table') and hasattr(self, 'lbl_sum_in'):
+            self._refresh_table()
+            self._recalc_summary(getattr(self, "_visible_cache", []))
 
     def _load_prefs(self):
         self._loading_prefs = True

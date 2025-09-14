@@ -119,7 +119,7 @@ class ParametersPage(QWidget):
         form.addRow("Tema", self.cmb_theme)
 
         # Butonlar
-        buttons_layout = QHBoxLayout()
+        buttons_layout = QHBoxLayout()GİT 
         self.btn_save = QPushButton("Kaydet")
         self.btn_reset = QPushButton("Varsayılanlara Dön")
         buttons_layout.addWidget(self.btn_save)
@@ -191,3 +191,82 @@ class ParametersPage(QWidget):
         super().resizeEvent(e)
         self._sky.resize(self.size())
         self._paint_sky(self.width(), self.height())
+
+# === ORTAK YARDIMCI FONKSİYONLAR ===
+
+def parse_money(text) -> float:
+    """'₺25.330,00' → 25330.00; sağlam fallback'li."""
+    if text in (None, ""):
+        return 0.0
+
+    s = str(text).replace("₺", "").replace("\u00a0", "").strip()
+
+    # TR formatı için özel mantık: "25.330,00"
+    import re
+
+    # Sayısal kısmı çıkar
+    match = re.search(r'[\d.,]+', s)
+    if match:
+        num_str = match.group()
+
+        # TR formatı: binlik nokta, ondalık virgül
+        if ',' in num_str and '.' in num_str:
+            # "25.330,00" formatı
+            # Virgülü noktaya çevir
+            num_str = num_str.replace(',', '.')
+            # Son noktadan önceki tüm noktaları kaldır
+            parts = num_str.split('.')
+            if len(parts) > 2:
+                integer_part = ''.join(parts[:-1])
+                decimal_part = parts[-1]
+                num_str = f"{integer_part}.{decimal_part}"
+        elif ',' in num_str:
+            # "25330,00" formatı - sadece virgül
+            num_str = num_str.replace(',', '.')
+        elif '.' in num_str:
+            # "25330.00" formatı - zaten doğru
+            pass
+        else:
+            # "25330" formatı - tam sayı
+            pass
+
+        try:
+            result = float(num_str)
+            if result > 0:
+                return result
+        except:
+            pass
+
+    # QLocale'yu yedek olarak dene
+    ok, val = TR.toDouble(s)
+    if ok and val > 0:
+        return float(val)
+
+    # Son çare: tüm nokta ve virgülleri kaldır
+    cleaned = re.sub(r'[.,]', '', s)
+    try:
+        result = float(cleaned)
+        if result > 0:
+            # Eğer 6+ haneli ise kuruş olarak değerlendir
+            if len(cleaned) > 5:
+                return result / 100
+            else:
+                return result
+    except:
+        pass
+
+    return 0.0
+
+def fmt_money(val: float) -> str:
+    return TR.toCurrencyString(float(val), "₺")
+
+def fmt_date(d) -> str:
+    from PyQt6.QtCore import QDate
+    if isinstance(d, QDate):
+        return d.toString("dd.MM.yyyy")
+    # DB'de 'yyyy-MM-dd' saklıyorsan:
+    qd = QDate.fromString(str(d), "yyyy-MM-dd")
+    return qd.toString("dd.MM.yyyy") if qd.isValid() else str(d)
+
+def fmt_time(t: str) -> str:
+    return (t or "")[:5]

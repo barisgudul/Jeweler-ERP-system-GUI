@@ -17,6 +17,7 @@ from pages.sales import SalesPage
 from pages.finance import FinancePage
 from pages.reports import ReportsPage
 from pages.parameters import ParametersPage
+from data.service import DataService
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -52,6 +53,9 @@ class MainWindow(QMainWindow):
         self.sidebar.setVisible(False)  # <— önemli
         layout.addWidget(self.sidebar)
 
+        # DataService oluştur
+        self.data = DataService("orbitx.db")
+
         # Sayfa yığını
         self.stack = QStackedWidget()
         self.page_index = {"login": 0, "dashboard": 1, "stock": 2, "customers": 3, "sales": 4, "finance": 5, "reports": 6, "parameters": 7}
@@ -59,15 +63,21 @@ class MainWindow(QMainWindow):
         # Sayfalar
         self.login = LoginPage()
         self.dashboard = DashboardPage()
-        self.stock = StockPage()
-        self.customers = CustomersPage()
-        self.sales = SalesPage()
-        self.finance = FinancePage()
+        self.stock = StockPage(self.data)
+        self.customers = CustomersPage(self.data)
+        self.sales = SalesPage(self.data)
+        self.finance = FinancePage(self.data)
         self.reports = ReportsPage()
         self.parameters = ParametersPage()
 
-        # Sales → Finance sinyal bağlantısı
+        # Sinyal bağlantıları
         self.sales.transactionCommitted.connect(self.finance.add_row_from_sales)
+        self.sales.transactionCommitted.connect(self.customers.on_transaction_from_sales)
+        self.sales.transactionCommitted.connect(self.stock.on_transaction_from_sales)
+
+        self.data.stockChanged.connect(self.stock.reload_from_db)
+        self.data.customersChanged.connect(self.customers.reload_from_db)
+        self.data.cashChanged.connect(self.finance.reload_from_db)
 
         self.stack.addWidget(self.login)      # 0
         self.stack.addWidget(self.dashboard)  # 1
