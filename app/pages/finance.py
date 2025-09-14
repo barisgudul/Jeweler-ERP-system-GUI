@@ -3,14 +3,31 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGridLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
     QLineEdit, QComboBox, QDateEdit, QTimeEdit, QPushButton, QGroupBox, QFormLayout,
-    QDoubleSpinBox, QTextEdit, QMessageBox, QDialog, QSizePolicy
+    QDoubleSpinBox, QTextEdit, QMessageBox, QDialog, QSizePolicy, QScrollArea
 )
 from PyQt6.QtCore import Qt, QDate, QTime, QDateTime, QLocale, QTimer, QSettings
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QLinearGradient, QColor, QPalette, QShortcut, QKeySequence
+import random
 from random import randint, choice
 from theme import elevate, apply_dialog_theme
 from dialogs import ExpenseVoucherDialog
 from .parameters import parse_money, fmt_money, fmt_date, fmt_time, TR
+
+# Özel sıralama için item sınıfı
+class SortableItem(QTableWidgetItem):
+    def __lt__(self, other):
+        tw = self.tableWidget()
+        if not tw:
+            return super().__lt__(other)
+        col = tw.horizontalHeader().sortIndicatorSection()
+        # Kolon 0: Tarih için epoch/saniye (UserRole+1)
+        if col == 0:
+            return (self.data(Qt.ItemDataRole.UserRole + 1)
+                    < other.data(Qt.ItemDataRole.UserRole + 1))
+        # Kolon 8: Tutar için sayısal değer (UserRole+2)
+        if col == 8:
+            return float(self.data(Qt.ItemDataRole.UserRole + 2) or 0) < float(other.data(Qt.ItemDataRole.UserRole + 2) or 0)
+        return super().__lt__(other)
 
 # Mock cari hesap listesi
 CUSTOMERS_FOR_FINANCE = [
@@ -39,8 +56,9 @@ class NewFinanceRecordDialog(QDialog):
 
         # Pencere
         self.setModal(True)
-        self.setMinimumWidth(520)
-        self.setWindowFlag(Qt.WindowType.MSWindowsFixedSizeDialogHint)
+        self.setMinimumWidth(700)   # önce 520 idi
+        self.setSizeGripEnabled(True)         # köşeden tutulup büyüyebilsin
+        self.resize(780, 620)       # önce 560x540 idi
         self.setWindowTitle(f"{record_type} Kaydı Ekle - Finansal İşlem")
         self.setObjectName("FinanceDialog")
         apply_dialog_theme(self, "dim")
@@ -77,6 +95,16 @@ class NewFinanceRecordDialog(QDialog):
         time_grid.addWidget(self._lbl("Saat *"), 0, 1)
         self.f_time = QTimeEdit(QTime.currentTime()); self.f_time.setDisplayFormat("HH:mm")
         time_grid.addWidget(self.f_time, 1, 1)
+
+        # Referans No (salt-okunur)
+        time_grid.addWidget(self._lbl("Referans No"), 2, 0)
+        self.f_ref_no = QLabel("—"); self.f_ref_no.setStyleSheet("padding:6px; background:rgba(255,255,255,0.04); border-radius:4px; font-family:monospace;")
+        time_grid.addWidget(self.f_ref_no, 3, 0)
+
+        # Tür Kodu (salt-okunur, kategori bazlı)
+        time_grid.addWidget(self._lbl("Tür Kodu"), 2, 1)
+        self.f_type_code = QLabel("—"); self.f_type_code.setStyleSheet("padding:6px; background:rgba(255,255,255,0.04); border-radius:4px; font-family:monospace; font-weight:bold;")
+        time_grid.addWidget(self.f_type_code, 3, 1)
         body.addWidget(g_time)
 
         # --- İŞLEM DETAYLARI ---
@@ -118,12 +146,14 @@ class NewFinanceRecordDialog(QDialog):
         self.f_amt.setLocale(TR)   # Türkçe biçim
         self.f_amt.setButtonSymbols(self.f_amt.ButtonSymbols.NoButtons)
         self.f_amt.setAlignment(Qt.AlignmentFlag.AlignRight)
-        amt_grid.addWidget(self.f_amt, 1, 0)
+        amt_grid.addWidget(self.f_amt, 1, 0, 1, 2)  # 2 kolon genişlik
 
-        amt_grid.addWidget(self._lbl("Açıklama *"), 2, 0)
+        amt_grid.addWidget(self._lbl("Açıklama *"), 4, 0)
         self.f_desc = QTextEdit(); self.f_desc.setPlaceholderText("Kısa ama anlamlı bir açıklama yazın…")
         self.f_desc.setMaximumHeight(90)
-        amt_grid.addWidget(self.f_desc, 3, 0, 1, 2)
+        self.f_desc.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.f_desc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        amt_grid.addWidget(self.f_desc, 5, 0, 1, 2)
         body.addWidget(g_amt)
 
         # --- ÖZET ŞERİDİ ---
@@ -133,7 +163,32 @@ class NewFinanceRecordDialog(QDialog):
                                    "border-radius:8px; background:rgba(255,255,255,0.04);")
         body.addWidget(self.summary)
 
-        root.addWidget(card)
+        # Scroll area ile kaydırılabilir yap
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(card)
+
+        # >>> sadece dikey kaydır, yatayı kapat
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # genişliği esnet
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        # >>> ekle: tema bozulmasını engelle (beyaz zemin ve grimsi scrollbarlar gitmiş olur)
+        scroll.setStyleSheet("""
+            QScrollArea { background: transparent; }
+            QScrollArea > QWidget > QWidget { background: transparent; }
+            QScrollBar:vertical {
+                background: rgba(255,255,255,0.04); border: none; margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255,255,255,0.15); border-radius: 4px; min-height: 40px;
+            }
+        """)
+
+        root.addWidget(scroll, 1)
 
         # Alt butonlar
         actions = QHBoxLayout(); actions.addStretch(1)
@@ -161,13 +216,28 @@ class NewFinanceRecordDialog(QDialog):
         self.f_cat.currentIndexChanged.connect(self._refresh_state)
         self.f_desc.textChanged.connect(self._refresh_state)
         self.f_amt.valueChanged.connect(self._refresh_state)
+        self.f_date.dateChanged.connect(self._update_ref_no)  # Referans No güncellemesi
+        self.f_cat.currentIndexChanged.connect(self._update_type_code)  # Tür kodu güncellemesi
+
         self._refresh_state()
+        self._update_ref_no()  # İlk referans no oluştur
+        self._update_type_code()  # İlk tür kodu
 
     # ---------- yardımcılar ----------
     def _lbl(self, txt):
         lbl = QLabel(txt)
         lbl.setStyleSheet("font-weight:600;")  # Renk tema fonksiyonundan gelecek
         return lbl
+
+    def _update_ref_no(self):
+        """Referans numarasını güncelle"""
+        ref_no = f"FIN{self.f_date.date().toString('yyMMdd')}{str(random.randint(1, 9999)).zfill(4)}"
+        self.f_ref_no.setText(ref_no)
+
+    def _update_type_code(self):
+        """Tür kodunu kategori bazlı güncelle"""
+        type_code = self._get_type_code()
+        self.f_type_code.setText(type_code)
 
     def _refresh_state(self):
         # Özet
@@ -206,8 +276,6 @@ class NewFinanceRecordDialog(QDialog):
             self.accept()
 
     def data(self):
-        import random
-        doc_no = f"FIN{random.randint(1000, 9999):04d}"
         return {
             "tarih": self.f_date.date().toString("dd.MM.yyyy"),
             "saat":  self.f_time.time().toString("HH:mm"),
@@ -215,10 +283,30 @@ class NewFinanceRecordDialog(QDialog):
             "tur":   self.record_type,
             "kategori": self.f_cat.currentText(),
             "cari":  self.f_customer.currentText(),
-            "belge_no": doc_no,
+            "ref_no": self.f_ref_no.text(),
             "aciklama": self.f_desc.toPlainText().strip(),
-            "tutar": self.f_amt.value()
+            "tutar": self.f_amt.value(),
+            "currency_code": "00",      # TRY
+            "amount_foreign": 0.0,
+            "fx_rate": 1.0,
+            "type_code": self._get_type_code()
         }
+
+    def _get_type_code(self):
+        """Kategori bazlı tür kodu döndürür"""
+        cat = self.f_cat.currentText()
+        # Eski DOS sistemine uygun kısa kodlar
+        code_map = {
+            "Satış Tahsilatı": "ST",
+            "Müşteri Ödemesi": "MO",
+            "Diğer Gelirler": "DG",
+            "Masraf": "MS",
+            "Tedarikçi Ödemesi": "TO",
+            "Kira": "KR",
+            "Elektrik": "EL",
+            "Diğer Giderler": "DD"  # Gider için DD (Diğer Giderler)
+        }
+        return code_map.get(cat, "XX")
 
 # --- cam KPI kartı - GÜNCELLENDİ (DAHA KOMPAKT) ---
 def _kpi(title: str, value: str, sub: str = "") -> tuple[QFrame, QLabel]:
@@ -267,6 +355,7 @@ class FinancePage(QWidget):
         self._sky.lower()
         self._sky.setScaledContents(True)
         self._sky.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._sky_cache = {}  # Boyut bazlı cache
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
@@ -388,6 +477,7 @@ class FinancePage(QWidget):
                 selection-background-color: #4C7DFF;
             }
         """)
+
 
         self.dt_from = QDateEdit(QDate(2025, 1, 1))  # 2025 başı
         self.dt_from.setCalendarPopup(True)
@@ -554,8 +644,8 @@ class FinancePage(QWidget):
         lbl_left.setStyleSheet("color: #E9EDF2; margin-bottom: 4px;")
         lv.addWidget(lbl_left)
 
-        self.table = QTableWidget(0, 7, self)
-        self.table.setHorizontalHeaderLabels(["Tarih","Saat","Hesap","Tür","Kategori","Açıklama","Tutar"])
+        self.table = QTableWidget(0, 9, self)
+        self.table.setHorizontalHeaderLabels(["Tarih","Saat","Ref No","Hesap","Tür","Kod","Kategori","Açıklama","Tutar"])
         self.table.verticalHeader().setVisible(False)
         self.table.setCornerButtonEnabled(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -631,14 +721,18 @@ class FinancePage(QWidget):
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(1, 70)   # saat
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(2, 160)  # hesap
+        self.table.setColumnWidth(2, 120)  # ref no
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(3, 80)   # tür
+        self.table.setColumnWidth(3, 140)  # hesap
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(4, 160)  # kategori
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch) # açıklama
+        self.table.setColumnWidth(4, 70)   # tür
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(5, 60)   # kod
         hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(6, 120)  # tutar
+        self.table.setColumnWidth(6, 120)  # kategori
+        hdr.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch) # açıklama
+        hdr.setSectionResizeMode(8, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(8, 120)  # tutar
 
         lv.addWidget(self.table)
 
@@ -696,8 +790,7 @@ class FinancePage(QWidget):
         sv.addLayout(row3)
         box_sum.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
-        # mock satırlar - etiketlerden sonra yükle
-        self._load_mock_rows()
+        # mock satırlar - DB boşsa reload_from_db içinde yüklenecek
 
         # --- 2. İşlemler Grubu (GRID DÜZENİ) ---
         actions_group = QGroupBox("İşlemler")
@@ -797,6 +890,7 @@ class FinancePage(QWidget):
         QTimer.singleShot(0, lambda: self.splitter.setSizes([self.width()-360, 360]))
         QTimer.singleShot(0, lambda: self._paint_sky(self.width(), self.height()))
         QTimer.singleShot(0, self._load_prefs)
+        QTimer.singleShot(0, self.reload_from_db)  # UI kurulduktan hemen sonra DB'yi yükle
 
     # FinancePage içinde
     def _action_btn(self, text: str, variant: str = "neutral") -> QPushButton:
@@ -864,6 +958,13 @@ class FinancePage(QWidget):
     # --- kozmik arka plan
     def _paint_sky(self, w: int, h: int):
         if w <= 0 or h <= 0: return
+
+        # Cache kontrolü - aynı boyutta önceki pixmap varsa kullan
+        cache_key = (w, h)
+        if cache_key in self._sky_cache:
+            self._sky.setPixmap(self._sky_cache[cache_key])
+            return
+
         pm = QPixmap(w, h)
         pm.fill(Qt.GlobalColor.black)
         p = QPainter(pm)
@@ -880,6 +981,14 @@ class FinancePage(QWidget):
             p.setBrush(QColor(255,255,255, randint(70,150)))
             p.drawEllipse(x,y,r,r)
         p.end()
+
+        # Cache'e ekle ve kullan (maksimum 10 cache öğesi tut)
+        if len(self._sky_cache) > 10:
+            # En eski öğeyi kaldır
+            oldest_key = next(iter(self._sky_cache))
+            del self._sky_cache[oldest_key]
+
+        self._sky_cache[cache_key] = pm
         self._sky.setPixmap(pm)
 
     def resizeEvent(self, e):
@@ -928,28 +1037,34 @@ class FinancePage(QWidget):
 
     def _load_mock_rows(self):
         samples = [
-            ("09.09.2025","09:15","Kasa","Giriş","Satış Tahsilatı","A. Yılmaz'a 22A bilezik satışı - nakit", 25400.00),
-            ("09.09.2025","09:45","Banka — VakıfBank","Giriş","Müşteri Ödemesi","M. Demir'den havale - borç kapat", 18750.00),
-            ("09.09.2025","10:30","Kasa","Giriş","Satış Tahsilatı","Z. Arslan'a küpe seti - kart", 45900.00),
-            ("09.09.2025","11:20","Banka — Ziraat","Giriş","Müşteri Ödemesi","E. Korkmaz'dan EFT - altın borç", 32500.00),
-            ("09.09.2025","12:10","Kasa","Çıkış","Masraf","Kırtasiye malzemeleri", -850.00),
-            ("09.09.2025","13:45","Banka — VakıfBank","Çıkış","Tedarikçi Ödemesi","Altın tedarikçisi faturası", -67300.00),
-            ("09.09.2025","14:20","Kasa","Giriş","Satış Tahsilatı","İ. Şahin'e kolye - nakit", 28600.00),
-            ("09.09.2025","15:05","Banka — Ziraat","Çıkış","Masraf","Mağaza kirası ödemesi", -15500.00),
-            ("09.09.2025","15:40","Kasa","Giriş","Satış Tahsilatı","B. Aydın'a gram altın - kart", 12300.00),
-            ("09.09.2025","16:15","Kasa","Çıkış","Masraf","Çay/kahve ikramı", -120.00),
-            ("09.09.2025","16:45","Banka — VakıfBank","Giriş","Müşteri Ödemesi","C. Özkan'dan havale - borç kapat", 9200.00),
-            ("09.09.2025","17:20","Kasa","Çıkış","Tedarikçi Ödemesi","Gümüş tedarikçisi ödemesi", -8900.00),
-            ("08.09.2025","16:30","Banka — Ziraat","Giriş","Satış Tahsilatı","Dünkü satışlardan havale", 55200.00),
-            ("08.09.2025","14:15","Kasa","Çıkış","Masraf","Elektrik faturası", -2450.00),
-            ("08.09.2025","11:50","Banka — VakıfBank","Çıkış","Tedarikçi Ödemesi","Altın külçe tedarikçisi", -89400.00),
+            ("09.09.2025","09:15","Kasa","Giriş","Satış Tahsilatı","A. Yılmaz'a 22A bilezik satışı - nakit", 25400.00, "ST"),
+            ("09.09.2025","09:45","Banka — VakıfBank","Giriş","Müşteri Ödemesi","M. Demir'den havale - borç kapat", 18750.00, "MO"),
+            ("09.09.2025","10:30","Kasa","Giriş","Satış Tahsilatı","Z. Arslan'a küpe seti - kart", 45900.00, "ST"),
+            ("09.09.2025","11:20","Banka — Ziraat","Giriş","Müşteri Ödemesi","E. Korkmaz'dan EFT - altın borç", 32500.00, "MO"),
+            ("09.09.2025","12:10","Kasa","Çıkış","Masraf","Kırtasiye malzemeleri", -850.00, "MS"),
+            ("09.09.2025","13:45","Banka — VakıfBank","Çıkış","Tedarikçi Ödemesi","Altın tedarikçisi faturası", -67300.00, "TO"),
+            ("09.09.2025","14:20","Kasa","Giriş","Satış Tahsilatı","İ. Şahin'e kolye - nakit", 28600.00, "ST"),
+            ("09.09.2025","15:05","Banka — Ziraat","Çıkış","Masraf","Mağaza kirası ödemesi", -15500.00, "MS"),
+            ("09.09.2025","15:40","Kasa","Giriş","Satış Tahsilatı","B. Aydın'a gram altın - kart", 12300.00, "ST"),
+            ("09.09.2025","16:15","Kasa","Çıkış","Masraf","Çay/kahve ikramı", -120.00, "MS"),
+            ("09.09.2025","16:45","Banka — VakıfBank","Giriş","Müşteri Ödemesi","C. Özkan'dan havale - borç kapat", 9200.00, "MO"),
+            ("09.09.2025","17:20","Kasa","Çıkış","Tedarikçi Ödemesi","Gümüş tedarikçisi ödemesi", -8900.00, "TO"),
+            ("08.09.2025","16:30","Banka — Ziraat","Giriş","Satış Tahsilatı","Dünkü satışlardan havale", 55200.00, "ST"),
+            ("08.09.2025","14:15","Kasa","Çıkış","Masraf","Elektrik faturası", -2450.00, "MS"),
+            ("08.09.2025","11:50","Banka — VakıfBank","Çıkış","Tedarikçi Ödemesi","Altın külçe tedarikçisi", -89400.00, "TO"),
         ]
         self._rows = []
-        for (t,s,h,tur,k,a,v) in samples:
+        for (t,s,h,tur,k,a,v,code) in samples:
+            # Tutarlı ref_no üretimi
+            qd = QDate.fromString(t, "dd.MM.yyyy")
+            ref_no = f"FIN{qd.toString('yyMMdd')}{str(random.randint(1, 9999)).zfill(4)}"
+
             self._rows.append({
                 "id": self._seq, "tarih": t, "saat": s,
                 "hesap": h, "tur": tur, "kategori": k,
-                "aciklama": a, "tutar": v
+                "aciklama": a, "tutar": v,
+                "ref_no": ref_no, "type_code": code,
+                "currency_code": "00", "amount_foreign": 0.0, "fx_rate": 1.0
             })
             self._seq += 1
         self._refresh_table()   # tabloyu ve özeti ilk kez çiz
@@ -968,10 +1083,11 @@ class FinancePage(QWidget):
         h = self.cmb_account.currentText()
         if h != "Tüm Hesaplar" and r["hesap"] != h:
             return False
+
         # arama
         q = self.e_search.text().strip().lower()
         if q:
-            hay = (r["aciklama"] + " " + r["kategori"] + " " + r["hesap"]).lower()
+            hay = (r["aciklama"] + " " + r["kategori"] + " " + r["hesap"] + " " + r.get("ref_no", "")).lower()
             if q not in hay:
                 return False
         return True
@@ -992,17 +1108,27 @@ class FinancePage(QWidget):
         for i, r in enumerate(vis):
             # Tarih formatını düzelt (yyyy-MM-dd → dd.MM.yyyy)
             tarih_fmt = fmt_date(r["tarih"])
-            it_date = QTableWidgetItem(tarih_fmt)
+            it_date = SortableItem(tarih_fmt)
             it_date.setData(Qt.ItemDataRole.UserRole, r["id"])
             # Sıralama için tarih+saat'i UserRole'a koy (PyQt6'da SortRole yok)
-            dt = QDateTime.fromString(f"{r['tarih']} {r['saat']}", "yyyy-MM-dd HH:mm")
-            it_date.setData(Qt.ItemDataRole.UserRole + 1, dt)  # UserRole + 1 kullan
+            raw_date = r["tarih"]  # DB'den iso gelebilir veya dd.MM.yyyy olabilir
+            raw_time = r["saat"] or "00:00"
+
+            # Her iki formata da dene:
+            dt = QDateTime.fromString(f"{raw_date} {raw_time}", "dd.MM.yyyy HH:mm")
+            if not dt.isValid():
+                dt = QDateTime.fromString(f"{raw_date} {raw_time}", "yyyy-MM-dd HH:mm")
+
+            # Epoch/saniye olarak sakla (kesin sayısal sıralama için)
+            it_date.setData(Qt.ItemDataRole.UserRole + 1, int(dt.toSecsSinceEpoch()) if dt.isValid() else 0)
             self.table.setItem(i, 0, it_date)
 
             self.table.setItem(i, 1, QTableWidgetItem(fmt_time(r["saat"])))
-            self.table.setItem(i, 2, QTableWidgetItem(r["hesap"]))
-            self.table.setItem(i, 3, QTableWidgetItem(r["tur"]))
-            self.table.setItem(i, 4, QTableWidgetItem(r["kategori"]))
+            self.table.setItem(i, 2, QTableWidgetItem(r.get("ref_no", "—")))
+            self.table.setItem(i, 3, QTableWidgetItem(r["hesap"]))
+            self.table.setItem(i, 4, QTableWidgetItem(r["tur"]))
+            self.table.setItem(i, 5, QTableWidgetItem(r.get("type_code", "—")))
+            self.table.setItem(i, 6, QTableWidgetItem(r["kategori"]))
 
             # açıklama hücresine müşteri adını dahil et
             desc_text = r["aciklama"]
@@ -1010,15 +1136,27 @@ class FinancePage(QWidget):
                 desc_text = f'{r["aciklama"]} — {r["cari"]}'
             desc_item = QTableWidgetItem(desc_text)
             desc_item.setToolTip(f"İlişkili Cari: {r.get('cari', '—')}")
-            self.table.setItem(i, 5, desc_item)
+            self.table.setItem(i, 7, desc_item)
 
-            # Tutarı fmt_money ile formatla
-            it = QTableWidgetItem(fmt_money(abs(r["tutar"])))
+            # Tutarı fmt_money ile formatla ve döviz tooltip'i ekle
+            it = SortableItem(fmt_money(abs(r["tutar"])))
             it.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             it.setForeground(QColor(120,200,140) if r["tutar"] >= 0 else QColor(220,120,120))
-            # (istersen tutarı da UserRole'a numeric ver)
+
+            # Döviz bilgilerini tooltip'e ekle
+            currency_code = r.get("currency_code", "00")
+            currency_map = {"00": "TRY", "01": "USD", "02": "EUR"}
+            currency = currency_map.get(currency_code, "TRY")
+
+            if currency != "TRY" and r.get("amount_foreign", 0) > 0:
+                fx_rate = r.get("fx_rate", 1.0)
+                tip = f"{r.get('amount_foreign', 0):,.2f} {currency} @ {fx_rate:,.4f} → {fmt_money(abs(r['tutar']))}"
+                it.setToolTip(tip)
+            else:
+                it.setToolTip("Türk Lirası")
+
             it.setData(Qt.ItemDataRole.UserRole + 2, abs(float(r["tutar"])))
-            self.table.setItem(i, 6, it)
+            self.table.setItem(i, 8, it)
 
         self._visible_cache = vis
         self._recalc_summary(vis)
@@ -1099,6 +1237,11 @@ class FinancePage(QWidget):
         dlg.f_desc.setPlainText(rec["aciklama"])
         dlg.f_amt.setValue(abs(float(rec["tutar"])))
 
+        # Döviz alanları kaldırıldı - artık sadece TRY
+
+        # Ref No'yu göster (düzenlemede değişmez)
+        dlg.f_ref_no.setText(rec.get("ref_no", "—"))
+
         # ---- İLİŞKİLİ CARİYİ DOĞRU SEÇ ----
         cust = rec.get("cari", "").strip()
         if cust:
@@ -1125,24 +1268,12 @@ class FinancePage(QWidget):
 
         if dlg.exec():
             data = dlg.data()
-            if not data["aciklama"].strip() or data["tutar"] <= 0:
-                QMessageBox.warning(self, "Uyarı", "Tutar > 0 ve açıklama zorunlu.")
+            if not data["aciklama"].strip() or len(data["aciklama"].strip()) < 3 or data["tutar"] <= 0:
+                QMessageBox.warning(self, "Uyarı", "Tutar > 0 ve açıklama en az 3 karakter olmalıdır.")
                 return
 
-            rec.update({
-                "tarih": data["tarih"],
-                "saat":  data["saat"],
-                "hesap": data["hesap"],
-                "tur":   data["tur"],
-                "kategori": data["kategori"],
-                "aciklama": data["aciklama"],
-                "tutar":  data["tutar"] if data["tur"] == "Giriş" else -data["tutar"],
-                "cari": data["cari"] if not data["cari"].startswith("Müşteri Seç") else "",
-            })
-            self._refresh_table()
-            # Kısa bekletme ile tablonun güncellenmesini bekle
-            from PyQt6.QtCore import QTimer
-            QTimer.singleShot(50, lambda: self._select_id_in_table(rid))
+            # DB'ye güncelle
+            self._update_cash_row(rid, data)
             QMessageBox.information(self, "Güncellendi", "Kayıt başarıyla güncellendi.")
 
     def _delete_selected(self):
@@ -1165,13 +1296,8 @@ class FinancePage(QWidget):
         if btn != QMessageBox.StandardButton.Yes:
             return
 
-        self._rows = [r for r in self._rows if r.get("id") != rid]
-        self._refresh_table()
-
-        # Sonraki satırı seç
-        if self._visible_cache:
-            self._select_id_in_table(self._visible_cache[max(next_index,0)]["id"])
-
+        # DB'den sil
+        self._delete_cash_row(rid)
         QMessageBox.information(self, "Silindi", "Kayıt başarıyla silindi.")
 
     def open_new_record_dialog(self, record_type):
@@ -1195,8 +1321,8 @@ class FinancePage(QWidget):
 
         if dlg.exec():
             data = dlg.data()
-            if not data["aciklama"].strip() or data["tutar"] <= 0:
-                QMessageBox.warning(self, "Uyarı", "Tutar > 0 ve açıklama zorunlu.")
+            if not data["aciklama"].strip() or len(data["aciklama"].strip()) < 3 or data["tutar"] <= 0:
+                QMessageBox.warning(self, "Uyarı", "Tutar > 0 ve açıklama en az 3 karakter olmalıdır.")
                 return
 
             # modele ekle
@@ -1210,26 +1336,44 @@ class FinancePage(QWidget):
                 "aciklama": data["aciklama"],
                 "tutar":  data["tutar"] if record_type=="Giriş" else -data["tutar"],
                 "cari": data["cari"] if not data["cari"].startswith("Müşteri Seç") else "",
+                "ref_no": data["ref_no"],
+                "currency_code": data["currency_code"],
+                "amount_foreign": data["amount_foreign"],
+                "fx_rate": data["fx_rate"],
+                "type_code": data["type_code"],
             })
             self._seq += 1
             self._refresh_table()
 
+            # DB'ye kaydet
+            self._insert_cash_row(data)
+
             QMessageBox.information(self, "Kaydedildi",
-                f"{record_type} kaydı eklendi.\nTutar: {tl(data['tutar'])} • Belge No: {data['belge_no']}")
+                f"{record_type} kaydı eklendi.\nTutar: {tl(data['tutar'])} • Ref No: {data['ref_no']}")
 
     def open_expense_voucher(self):
         dlg = ExpenseVoucherDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             d = dlg.data()
-            self._rows.append({
-                "id": self._seq, "tarih": d["date"],
+            # ExpenseVoucher için veri hazırla
+            voucher_data = {
+                "tarih": d["date"],
                 "saat": QTime.currentTime().toString("HH:mm"),
-                "hesap": "Kasa", "tur": "Çıkış", "kategori": "Masraf",
+                "hesap": "Kasa",
+                "tur": "Çıkış",
+                "kategori": "Masraf",
+                "cari": "",
+                "ref_no": f"FIN{QDate.fromString(d['date'], 'dd.MM.yyyy').toString('yyMMdd')}{str(random.randint(1, 9999)).zfill(4)}",
                 "aciklama": f"Gider Pusulası — {d['mahi']} ({d['cins']})",
-                "tutar": -float(d["tutar"]),
-            })
-            self._seq += 1
-            self._refresh_table()
+                "tutar": float(d["tutar"]),
+                "currency_code": "00",  # TRY
+                "amount_foreign": 0.0,
+                "fx_rate": 1.0,
+                "type_code": "MS"
+            }
+
+            # DB'ye kaydet
+            self._insert_cash_row(voucher_data)
             QMessageBox.information(self, "Gider Pusulası", f"Kayıt eklendi. Tutar: {tl(d['tutar'])}")
 
     def _export_excel(self):
@@ -1257,27 +1401,41 @@ class FinancePage(QWidget):
             fmt_h = wb.add_format({"bold": True, "bg_color": "#E8EEF9", "border": 1})
             fmt_tl_pos = wb.add_format({"num_format": u'[$-tr-TR]₺ #,##0.00;[Red]-[$-tr-TR]₺ #,##0.00', "border": 1})
             fmt_txt = wb.add_format({"border": 1})
+            fmt_num = wb.add_format({"num_format": '#,##0.00', "border": 1})  # Genel sayı formatı
 
-            headers = ["Tarih","Saat","Hesap","Tür","Kategori","Açıklama","Tutar"]
+            headers = ["Tarih","Saat","Ref No","Hesap","Tür","Kod","Kategori","Açıklama","Tutar"]
             for c, h in enumerate(headers): ws.write(0, c, h, fmt_h)
 
             for r, rec in enumerate(rows, start=1):
+                # Döviz kodu dönüşümü
+                currency_code = rec.get("currency_code", "00")
+                currency_map = {"00": "TRY", "01": "USD", "02": "EUR"}
+                currency = currency_map.get(currency_code, "TRY")
+
                 ws.write(r, 0, rec["tarih"], fmt_txt)
                 ws.write(r, 1, rec["saat"],  fmt_txt)
-                ws.write(r, 2, rec["hesap"], fmt_txt)
-                ws.write(r, 3, rec["tur"],   fmt_txt)
-                ws.write(r, 4, rec["kategori"], fmt_txt)
-                ws.write(r, 5, rec["aciklama"], fmt_txt)
-                ws.write_number(r, 6, float(rec["tutar"]), fmt_tl_pos)
+                ws.write(r, 2, rec.get("ref_no", "—"), fmt_txt)
+                ws.write(r, 3, rec["hesap"], fmt_txt)
+                ws.write(r, 4, rec["tur"],   fmt_txt)
+                ws.write(r, 5, rec.get("type_code", "—"), fmt_txt)
+                ws.write(r, 6, rec["kategori"], fmt_txt)
+                ws.write(r, 7, rec["aciklama"], fmt_txt)
+                ws.write_number(r, 8, float(rec["tutar"]), fmt_tl_pos)
+                ws.write(r, 9, currency, fmt_txt)
+                ws.write_number(r, 10, float(rec.get("amount_foreign", 0)), fmt_num)  # Genel sayı formatı
+                ws.write_number(r, 11, float(rec.get("fx_rate", 1)), fmt_num)
 
             ws.autofilter(0, 0, len(rows), len(headers)-1)
             ws.freeze_panes(1, 0)
             ws.set_column(0, 0, 12)  # Tarih
             ws.set_column(1, 1, 8)   # Saat
-            ws.set_column(2, 2, 20)  # Hesap
-            ws.set_column(3, 4, 14)  # Tür/Kategori
-            ws.set_column(5, 5, 36)  # Açıklama
-            ws.set_column(6, 6, 14)  # Tutar
+            ws.set_column(2, 2, 16)  # Ref No
+            ws.set_column(3, 3, 18)  # Hesap
+            ws.set_column(4, 4, 10)  # Tür
+            ws.set_column(5, 5, 8)   # Kod
+            ws.set_column(6, 6, 16)  # Kategori
+            ws.set_column(7, 7, 36)  # Açıklama
+            ws.set_column(8, 8, 14)  # Tutar
             wb.close()
 
         except Exception as e:
@@ -1286,14 +1444,18 @@ class FinancePage(QWidget):
                 import csv
                 if not path.lower().endswith(".csv"):
                     path += ".csv"
-                headers = ["Tarih","Saat","Hesap","Tür","Kategori","Açıklama","Tutar"]
+                headers = ["Tarih","Saat","Ref No","Hesap","Tür","Kod","Kategori","Açıklama","Tutar"]
                 with open(path, "w", newline="", encoding="utf-8-sig") as f:
                     w = csv.writer(f, delimiter=";")
                     w.writerow(headers)
                     for rec in rows:
                         tutar = f"{rec['tutar']:.2f}".replace(".", ",")  # TR uyumlu
-                        w.writerow([rec["tarih"], rec["saat"], rec["hesap"], rec["tur"],
-                                    rec["kategori"], rec["aciklama"], tutar])
+
+                        w.writerow([
+                            rec["tarih"], rec["saat"], rec.get("ref_no", "—"),
+                            rec["hesap"], rec["tur"], rec.get("type_code", "—"),
+                            rec["kategori"], rec["aciklama"], tutar
+                        ])
             except Exception as e2:
                 QMessageBox.critical(self, "Dışa Aktar", f"Kaydetme başarısız:\n{e2}")
                 return
@@ -1327,12 +1489,18 @@ class FinancePage(QWidget):
 
             rows_html = "\n".join([
                 f"<tr>"
-                f"<td>{r['tarih']}</td><td>{r['saat']}</td><td>{r['hesap']}</td>"
-                f"<td>{r['tur']}</td><td>{r['kategori']}</td><td>{r['aciklama']}</td>"
+                f"<td>{r['tarih']}</td><td>{r['saat']}</td><td>{r.get('ref_no', '—')}</td><td>{r['hesap']}</td>"
+                f"<td>{r['tur']}</td><td>{r.get('type_code', '—')}</td><td>{r['kategori']}</td><td>{r['aciklama']}</td>"
                 f"<td class='r' style='color:{'#4CAF50' if r['tutar']>=0 else '#E53935'};'>{tl_abs(r['tutar'])}</td>"
                 f"</tr>"
                 for r in rows
             ])
+
+            # Toplam hesaplamaları - HTML'den önce
+            rows = getattr(self, "_visible_cache", [])
+            total_in  = sum(r['tutar'] for r in rows if r['tutar'] > 0)
+            total_out = -sum(r['tutar'] for r in rows if r['tutar'] < 0)
+            net       = sum(r['tutar'] for r in rows)
 
             html = f"""
             <style>
@@ -1349,7 +1517,7 @@ class FinancePage(QWidget):
             <table>
               <thead>
                 <tr>
-                  <th>Tarih</th><th>Saat</th><th>Hesap</th><th>Tür</th><th>Kategori</th><th>Açıklama</th><th class='r'>Tutar</th>
+                  <th>Tarih</th><th>Saat</th><th>Ref No</th><th>Hesap</th><th>Tür</th><th>Kod</th><th>Kategori</th><th>Açıklama</th><th class='r'>Tutar</th>
                 </tr>
               </thead>
               <tbody>
@@ -1357,12 +1525,6 @@ class FinancePage(QWidget):
               </tbody>
             </table>
             <br/>
-            # Toplam hesaplamaları
-            rows = getattr(self, "_visible_cache", [])
-            total_in  = sum(r['tutar'] for r in rows if r['tutar'] > 0)
-            total_out = -sum(r['tutar'] for r in rows if r['tutar'] < 0)
-            net       = sum(r['tutar'] for r in rows)
-
             <table>
               <tr><td><b>Toplam Giriş</b></td><td class='r'>{tl_abs(total_in)}</td></tr>
               <tr><td><b>Toplam Çıkış</b></td><td class='r'>{tl_abs(total_out)}</td></tr>
@@ -1459,10 +1621,11 @@ class FinancePage(QWidget):
 
     def reload_from_db(self):
         if not self.data: return
-        # Customer bilgisi ile birlikte çek
+        # Customer bilgisi ile birlikte çek (yeni alanları dahil et)
         rows = self.data.db.cx.execute("""
             SELECT c.id, c.date, c.time, c.account, c.type, c.category, c.description,
-                   c.amount, cu.name AS customer_name
+                   c.amount, cu.name AS customer_name,
+                   c.ref_no, c.currency_code, c.amount_foreign, c.fx_rate, c.type_code
             FROM cash_ledger c
             LEFT JOIN customers cu ON cu.id = c.customer_id
             ORDER BY c.date DESC, c.time DESC;
@@ -1472,12 +1635,26 @@ class FinancePage(QWidget):
         for r in rows:
             # sqlite3.Row nesneleri için dict() kullan
             row_dict = dict(r)
+            # DB'den gelen ISO tarihi dd.MM.yyyy formatına dönüştür
+            db_date = row_dict["date"]  # YYYY-MM-DD formatında
+            display_date = QDate.fromString(db_date, Qt.DateFormat.ISODate).toString("dd.MM.yyyy")
+
             self._rows.append({
-                "id": row_dict["id"], "tarih": row_dict["date"], "saat": row_dict.get("time") or "",
+                "id": row_dict["id"], "tarih": display_date, "saat": row_dict.get("time") or "",
                 "hesap": row_dict["account"], "tur": row_dict["type"], "kategori": row_dict.get("category") or "",
                 "aciklama": row_dict.get("description") or "", "tutar": (row_dict["amount"] if row_dict["type"]=="Giriş" else -row_dict["amount"]),
                 "cari": row_dict.get("customer_name") or "",  # müşteri adı
+                "ref_no": row_dict.get("ref_no") or "—",
+                "currency_code": row_dict.get("currency_code") or "00",
+                "amount_foreign": row_dict.get("amount_foreign") or 0.0,
+                "fx_rate": row_dict.get("fx_rate") or 1.0,
+                "type_code": row_dict.get("type_code") or "—",
             })
+
+        # Eğer DB boşsa mock'larla doldur; doluysa tabloyu çiz
+        if not self._rows:
+            self._load_mock_rows()
+            return
 
         # Tabloyu ve özetleri yenile - ancak UI öğeleri hazır olduğunda
         if hasattr(self, 'table') and hasattr(self, 'lbl_sum_in'):
@@ -1526,6 +1703,80 @@ class FinancePage(QWidget):
 
         # Görünümü güncelle
         self._refresh_table()
+
+    # --- DB Kalıcılık Fonksiyonları ---
+    def _insert_cash_row(self, data: dict):
+        """Yeni kayıt ekler"""
+        if not self.data: return
+        try:
+            with self.data.db.tx() as cx:
+                # Cari ID'yi bul
+                customer_name = data["cari"].split(" — ")[0] if data["cari"] and data["cari"] != "Müşteri Seç" else None
+                customer_id = None
+                if customer_name:
+                    row = cx.execute("SELECT id FROM customers WHERE name = ? LIMIT 1", (customer_name,)).fetchone()
+                    customer_id = row[0] if row else None
+
+                # ISO formatına dönüştür
+                iso_date = QDate.fromString(data["tarih"], "dd.MM.yyyy").toString(Qt.DateFormat.ISODate)
+
+                cx.execute("""
+                  INSERT INTO cash_ledger
+                    (date,time,account,type,category,description,amount,
+                     ref_no,currency_code,amount_foreign,fx_rate,type_code,customer_id)
+                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    iso_date, data["saat"], data["hesap"], data["tur"], data["kategori"],
+                    data["aciklama"], abs(float(data["tutar"])), data["ref_no"],
+                    data["currency_code"], float(data["amount_foreign"]),
+                    float(data["fx_rate"]), data["type_code"], customer_id
+                ))
+            self.data.cashChanged.emit()  # reload_from_db tetikler
+        except Exception as e:
+            print(f"DB insert error: {e}")
+            QMessageBox.critical(self, "Hata", f"Kayıt eklenirken hata oluştu:\n{e}")
+
+    def _update_cash_row(self, rid: int, data: dict):
+        """Kayıt günceller"""
+        if not self.data: return
+        try:
+            with self.data.db.tx() as cx:
+                # Cari ID'yi bul
+                customer_name = data["cari"].split(" — ")[0] if data["cari"] and data["cari"] != "Müşteri Seç" else None
+                customer_id = None
+                if customer_name:
+                    row = cx.execute("SELECT id FROM customers WHERE name = ? LIMIT 1", (customer_name,)).fetchone()
+                    customer_id = row[0] if row else None
+
+                # ISO formatına dönüştür
+                iso_date = QDate.fromString(data["tarih"], "dd.MM.yyyy").toString(Qt.DateFormat.ISODate)
+
+                cx.execute("""
+                  UPDATE cash_ledger SET
+                    date=?, time=?, account=?, type=?, category=?, description=?, amount=?,
+                    ref_no=?, currency_code=?, amount_foreign=?, fx_rate=?, type_code=?, customer_id=?
+                  WHERE id=?
+                """, (
+                    iso_date, data["saat"], data["hesap"], data["tur"], data["kategori"],
+                    data["aciklama"], abs(float(data["tutar"])), data["ref_no"],
+                    data["currency_code"], float(data["amount_foreign"]),
+                    float(data["fx_rate"]), data["type_code"], customer_id, rid
+                ))
+            self.data.cashChanged.emit()  # reload_from_db tetikler
+        except Exception as e:
+            print(f"DB update error: {e}")
+            QMessageBox.critical(self, "Hata", f"Kayıt güncellenirken hata oluştu:\n{e}")
+
+    def _delete_cash_row(self, rid: int):
+        """Kayıt siler"""
+        if not self.data: return
+        try:
+            with self.data.db.tx() as cx:
+                cx.execute("DELETE FROM cash_ledger WHERE id=?", (rid,))
+            self.data.cashChanged.emit()  # reload_from_db tetikler
+        except Exception as e:
+            print(f"DB delete error: {e}")
+            QMessageBox.critical(self, "Hata", f"Kayıt silinirken hata oluştu:\n{e}")
 
         # Açılışta da en yeni en üstte olsun
         QTimer.singleShot(100, lambda: self.table.sortItems(0, Qt.SortOrder.DescendingOrder))

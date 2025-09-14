@@ -119,7 +119,7 @@ class ParametersPage(QWidget):
         form.addRow("Tema", self.cmb_theme)
 
         # Butonlar
-        buttons_layout = QHBoxLayout()GİT 
+        buttons_layout = QHBoxLayout()
         self.btn_save = QPushButton("Kaydet")
         self.btn_reset = QPushButton("Varsayılanlara Dön")
         buttons_layout.addWidget(self.btn_save)

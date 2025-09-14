@@ -101,6 +101,12 @@ class DB:
           category TEXT, description TEXT,
           amount REAL NOT NULL,
           customer_id INTEGER, sale_id INTEGER,
+          -- Yeni alanlar (migration sonrası)
+          ref_no TEXT,
+          currency_code TEXT DEFAULT '00',   -- 00=TRY, 01=USD, 02=EUR
+          amount_foreign REAL DEFAULT 0,
+          fx_rate REAL DEFAULT 1,
+          type_code TEXT,                   -- Kısa kod (örn. DG, ST, MS)
           FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL,
           FOREIGN KEY(sale_id) REFERENCES sales(id) ON DELETE SET NULL
         );
@@ -111,3 +117,36 @@ class DB:
         CREATE INDEX IF NOT EXISTS idx_items_sale ON sale_items(sale_id);
         CREATE INDEX IF NOT EXISTS idx_cash_date ON cash_ledger(date);
         """)
+
+        # Migration: cash_ledger tablosuna yeni alanlar ekleme
+        self._migrate_cash_ledger_schema()
+
+    def _migrate_cash_ledger_schema(self):
+        """cash_ledger tablosuna yeni alanları ekler (migration)"""
+        try:
+            # Mevcut tablo yapısını kontrol et
+            cursor = self.cx.execute("PRAGMA table_info(cash_ledger)")
+            columns = [row[1] for row in cursor.fetchall()]
+
+            # Eksik alanları ekle
+            if 'ref_no' not in columns:
+                self.cx.execute("ALTER TABLE cash_ledger ADD COLUMN ref_no TEXT")
+
+            if 'currency_code' not in columns:
+                self.cx.execute("ALTER TABLE cash_ledger ADD COLUMN currency_code TEXT DEFAULT '00'")
+
+            if 'amount_foreign' not in columns:
+                self.cx.execute("ALTER TABLE cash_ledger ADD COLUMN amount_foreign REAL DEFAULT 0")
+
+            if 'fx_rate' not in columns:
+                self.cx.execute("ALTER TABLE cash_ledger ADD COLUMN fx_rate REAL DEFAULT 1")
+
+            if 'type_code' not in columns:
+                self.cx.execute("ALTER TABLE cash_ledger ADD COLUMN type_code TEXT")
+
+            self.cx.commit()
+            print("Cash ledger migration completed successfully")
+
+        except Exception as e:
+            print(f"Migration error: {e}")
+            # Hata durumunda rollback yapma, sadece log yaz
