@@ -37,7 +37,6 @@ def generate_customers(n=24):
             "Kod": f"CAR{i+1:04}",
             "AdSoyad": ad,
             "Telefon": f"05{randint(10,99)} {randint(100,999)} {randint(10,99)} {randint(10,99)}",
-            "Bakiye": float(randint(-5000, 15000)),
             "Son İşlem": f"{randint(1,28):02}.0{choice([6,7,8,9])}.2025",
             "Durum": choice(STATUSES),
         })
@@ -115,8 +114,8 @@ class CustomersPage(QWidget):
         table_title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
         table_layout.addWidget(table_title)
 
-        self.table = QTableWidget(0, 6, self)
-        self.table.setHorizontalHeaderLabels(["Kod","Ad Soyad","Telefon","Bakiye","Son İşlem","Durum"])
+        self.table = QTableWidget(0, 5, self)
+        self.table.setHorizontalHeaderLabels(["Kod","Ad Soyad","Telefon","Son İşlem","Durum"])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -142,8 +141,7 @@ class CustomersPage(QWidget):
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(2, 130)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(3, 110)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(4, 110)
-        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(5, 90)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed);   self.table.setColumnWidth(4, 90)
 
         # Header stilleri - İyileştirilmiş tasarım
         hdr.setStyleSheet("""
@@ -433,68 +431,15 @@ class CustomersPage(QWidget):
             self.table.setItem(i, 0, QTableWidgetItem(r["Kod"]))
             self.table.setItem(i, 1, QTableWidgetItem(r["AdSoyad"]))
             self.table.setItem(i, 2, QTableWidgetItem(r["Telefon"]))
-
-            # Bakiye sütunu - renklendirme ile
-            bakiye_item = QTableWidgetItem(tl(r["Bakiye"]))
-            bakiye_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            if r["Bakiye"] > 0:
-                bakiye_item.setForeground(QColor(76, 175, 80))  # Yeşil - alacaklı
-            elif r["Bakiye"] < 0:
-                bakiye_item.setForeground(QColor(244, 67, 54))  # Kırmızı - borçlu
-            self.table.setItem(i, 3, bakiye_item)
-
-            self.table.setItem(i, 4, QTableWidgetItem(r["Son İşlem"]))
-            self.table.setItem(i, 5, QTableWidgetItem(r["Durum"]))
+            self.table.setItem(i, 3, QTableWidgetItem(r["Son İşlem"]))
+            self.table.setItem(i, 4, QTableWidgetItem(r["Durum"]))
 
     def update_summary(self, rows):
         total_customers = len(rows)
-        total_balance = sum(float(row.get("Bakiye", 0.0)) for row in rows)
         active_customers = sum(1 for row in rows if row.get("Durum") == "Aktif")
-        debtor_count = sum(1 for row in rows if float(row.get("Bakiye", 0.0)) < 0)
+        self.summary.setText(f"Toplam Cari: {total_customers} • Aktif: {active_customers}")
 
-        summary_text = (
-            f"Toplam Cari: {total_customers} • Aktif: {active_customers} • "
-            f"Borçlu Cari: {debtor_count} • Genel Bakiye: {tl(total_balance)}"
-        )
-        self.summary.setText(summary_text)
-
-    def _create_balance_card(self, balance: float, parent=None) -> QFrame:
-        """Müşterinin bakiye durumunu gösteren profesyonel kart"""
-        card = QFrame(parent)
-        card.setObjectName("BalanceCard")
-        layout = QVBoxLayout(card)
-        layout.setSpacing(6)
-        layout.setContentsMargins(16, 14, 16, 14)
-
-        bakiye_durum = "Alacaklı" if balance > 0 else "Borçlu" if balance < 0 else "Bakiye Yok"
-
-        lbl_title = QLabel("Genel Bakiye")
-        lbl_title.setStyleSheet("color: #B7C0CC; font-size: 12px; font-weight: 600;")
-
-        lbl_balance = QLabel(tl(abs(balance)))
-        lbl_balance.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-
-        lbl_status = QLabel(bakiye_durum)
-        lbl_status.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-
-        # Renklendirme
-        if balance > 0:
-            card.setStyleSheet("background: rgba(76, 175, 80, 0.1); border: 1px solid rgba(76, 175, 80, 0.3); border-radius: 12px;")
-            lbl_balance.setStyleSheet("color: #4CAF50;")
-            lbl_status.setStyleSheet("color: #4CAF50;")
-        elif balance < 0:
-            card.setStyleSheet("background: rgba(244, 67, 54, 0.1); border: 1px solid rgba(244, 67, 54, 0.3); border-radius: 12px;")
-            lbl_balance.setStyleSheet("color: #F44336;")
-            lbl_status.setStyleSheet("color: #F44336;")
-        else:
-            card.setStyleSheet("background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px;")
-            lbl_balance.setStyleSheet("color: #E9EDF2;")
-            lbl_status.setStyleSheet("color: #B7C0CC;")
-
-        layout.addWidget(lbl_title)
-        layout.addWidget(lbl_balance)
-        layout.addWidget(lbl_status)
-        return card
+    # (Bakiye kartı kaldırıldı)
 
     def _open_drawer(self):
         row = self.table.currentRow()
@@ -526,9 +471,7 @@ class CustomersPage(QWidget):
         drawer_title.setStyleSheet("color: #E9EDF2;")
         self.drawer_layout.addWidget(drawer_title)
 
-        # 2. Bakiye Kartı
-        balance_card = self._create_balance_card(current_customer.get("Bakiye", 0.0))
-        self.drawer_layout.addWidget(balance_card)
+        # (Bakiye kartı gösterimi kaldırıldı)
 
         # 3. Hareketler Başlığı
         transactions_title = QLabel("Son Hareketler")
@@ -739,10 +682,10 @@ class CustomersPage(QWidget):
             from openpyxl import Workbook
             os.makedirs("exports", exist_ok=True)
             wb = Workbook(); ws = wb.active; ws.title = "Cari"
-            headers = ["Kod","Ad Soyad","Telefon","Bakiye","Son İşlem","Durum"]
+            headers = ["Kod","Ad Soyad","Telefon","Son İşlem","Durum"]
             ws.append(headers)
             for r in self._filtered:
-                ws.append([r[h] if h!="Bakiye" else r["Bakiye"] for h in headers])
+                ws.append([r[h] for h in headers])
             wb.save("exports/cari_listesi.xlsx")
             self.summary.setText(self.summary.text() + " • Excel: exports/cari_listesi.xlsx")
         except Exception as e:
@@ -761,7 +704,7 @@ class CustomersPage(QWidget):
             c.drawString(20*mm, y, "Cari Listesi"); y -= 10*mm
             c.setFont("Helvetica", 9)
             for r in self._filtered:
-                line = f"{r['Kod']:6}  {r['AdSoyad']:<22}  {r['Telefon']:>14}  {r['Bakiye']:>10.2f}  {r['Son İşlem']:>10}  {r['Durum']}"
+                line = f"{r['Kod']:6}  {r['AdSoyad']:<22}  {r['Telefon']:>14}  {r['Son İşlem']:>10}  {r['Durum']}"
                 c.drawString(15*mm, y, line)
                 y -= 6*mm
                 if y < 20*mm:
@@ -779,7 +722,7 @@ class CustomersPage(QWidget):
         self._all_rows = [{
            "Kod": r.get("code") or f"CAR{r['id']:04}",
            "AdSoyad": r["name"] or "", "Telefon": r.get("phone") or "",
-           "Bakiye": r.get("balance", 0.0), "Son İşlem": (r.get("last_txn_at") or "")[:10],
+           "Son İşlem": (r.get("last_txn_at") or "")[:10],
            "Durum": r.get("status") or "Aktif"
         } for r in rows]
         self._filtered = list(self._all_rows)

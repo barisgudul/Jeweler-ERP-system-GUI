@@ -55,6 +55,8 @@ class MainWindow(QMainWindow):
 
         # DataService oluştur
         self.data = DataService("orbitx.db")
+        # İlk kez açılışta boşsa demo verisi yükle
+        self.data.seed_demo_if_empty()
 
         # Sayfa yığını
         self.stack = QStackedWidget()
@@ -62,7 +64,7 @@ class MainWindow(QMainWindow):
 
         # Sayfalar
         self.login = LoginPage()
-        self.dashboard = DashboardPage()
+        self.dashboard = DashboardPage(self.data)
         self.stock = StockPage(self.data)
         self.customers = CustomersPage(self.data)
         self.sales = SalesPage(self.data)
@@ -78,6 +80,9 @@ class MainWindow(QMainWindow):
         self.data.stockChanged.connect(self.stock.reload_from_db)
         self.data.customersChanged.connect(self.customers.reload_from_db)
         self.data.cashChanged.connect(self.finance.reload_from_db)
+
+        # Satış/Alış sonrası Dashboard "Son İşlemler"i canlı güncelle
+        self.data.saleCommitted.connect(self.dashboard.on_sale_committed)
 
         self.stack.addWidget(self.login)      # 0
         self.stack.addWidget(self.dashboard)  # 1

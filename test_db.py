@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+### test_db.py ###
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "app"))
@@ -9,17 +9,17 @@ try:
     db = DB()
     print("✓ Veritabanı bağlantısı başarılı")
 
-    tables = [row[0] for row in db.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    tables = [row[0] for row in db.cx.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     print("✓ Oluşturulan tablolar:", tables)
 
     # Test verisi ekle
-    db.conn.execute("INSERT OR IGNORE INTO customers(name, phone) VALUES (?, ?)", ("Test Müşteri", "0555 123 4567"))
-    db.conn.execute("INSERT OR IGNORE INTO stock_items(code, name, qty, sell_price) VALUES (?, ?, ?, ?)",
+    db.cx.execute("INSERT OR IGNORE INTO customers(name, phone) VALUES (?, ?)", ("Test Müşteri", "0555 123 4567"))
+    db.cx.execute("INSERT OR IGNORE INTO stock_items(code, name, qty, sell_price) VALUES (?, ?, ?, ?)",
                    ("TEST001", "Test Ürün", 10, 100.0))
-    db.conn.commit()
+    db.cx.commit()
 
-    customers = db.conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
-    stock = db.conn.execute("SELECT COUNT(*) FROM stock_items").fetchone()[0]
+    customers = db.cx.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
+    stock = db.cx.execute("SELECT COUNT(*) FROM stock_items").fetchone()[0]
 
     print(f"✓ Müşteri sayısı: {customers}")
     print(f"✓ Stok öğesi sayısı: {stock}")

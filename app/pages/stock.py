@@ -323,16 +323,30 @@ class StockPage(QWidget):
         # PyQt6: exec() -> QDialog.DialogCode
         if dlg.exec() == QDialog.DialogCode.Accepted:   # <— düzeltme
             data = dlg.data()
-            # aynı kod varsa güncelle, yoksa ekle
-            for r in self._all_rows:
-                if r["Kod"] == data["Kod"]:
-                    r.update(data)
-                    QMessageBox.information(self, "Başarılı", "Stok kaydı başarıyla güncellendi.")
-                    break
-            else:
-                self._all_rows.insert(0, data)
-                QMessageBox.information(self, "Başarılı", "Stok kaydı başarıyla eklendi.")
-            self.apply_filters()
+
+            # DataService'e uygun format'a dönüştür
+            item_data = {
+                "code": data["Kod"],
+                "name": data["Ad"],
+                "category": data["Kategori"],
+                "milyem": data["Milyem"],
+                "ayar": data["Ayar"],
+                "gram": data["Gram"],
+                "qty": data["Adet"],
+                "buy_price": data["AlisFiyat"],
+                "sell_price": data["SatisFiyat"],
+                "isc_tip": data["IscTip"],
+                "isc_alinan": data["IscAlinan"],
+                "isc_verilen": data["IscVerilen"],
+                "vat": data["KDV"],
+                "critical_qty": data["KritikStok"]
+            }
+
+            try:
+                result = self.data.upsert_stock_item(item_data)
+                QMessageBox.information(self, "Başarılı", result["message"])
+            except Exception as e:
+                QMessageBox.critical(self, "Hata", f"Stok kaydı eklenirken hata oluştu:\n{str(e)}")
 
     # --- Düzenle
     def on_edit(self):
@@ -343,12 +357,30 @@ class StockPage(QWidget):
         dlg = NewStockDialog(self, initial=current)
         if dlg.exec() == QDialog.DialogCode.Accepted:   # <— düzeltme
             data = dlg.data()
-            for r in self._all_rows:
-                if r["Kod"] == current["Kod"]:
-                    r.update(data)
-                    break
-            self.apply_filters()
-            QMessageBox.information(self, "Başarılı", "Stok kaydı başarıyla güncellendi.")
+
+            # DataService'e uygun format'a dönüştür
+            item_data = {
+                "code": data["Kod"],
+                "name": data["Ad"],
+                "category": data["Kategori"],
+                "milyem": data["Milyem"],
+                "ayar": data["Ayar"],
+                "gram": data["Gram"],
+                "qty": data["Adet"],
+                "buy_price": data["AlisFiyat"],
+                "sell_price": data["SatisFiyat"],
+                "isc_tip": data["IscTip"],
+                "isc_alinan": data["IscAlinan"],
+                "isc_verilen": data["IscVerilen"],
+                "vat": data["KDV"],
+                "critical_qty": data["KritikStok"]
+            }
+
+            try:
+                result = self.data.upsert_stock_item(item_data)
+                QMessageBox.information(self, "Başarılı", result["message"])
+            except Exception as e:
+                QMessageBox.critical(self, "Hata", f"Stok kaydı güncellenirken hata oluştu:\n{str(e)}")
 
     # --- Sil
     def on_delete(self):
@@ -360,9 +392,15 @@ class StockPage(QWidget):
                                      f"{current['Ad']} ürününü silmek istediğinizden emin misiniz?")
         if reply == QMessageBox.StandardButton.Yes:
             kod = self.table.item(row, 0).text()
-            self._all_rows = [r for r in self._all_rows if r["Kod"] != kod]
-            self.apply_filters()
-            QMessageBox.information(self, "Başarılı", "Stok kaydı başarıyla silindi.")
+
+            try:
+                result = self.data.delete_stock_item(kod)
+                if result["success"]:
+                    QMessageBox.information(self, "Başarılı", result["message"])
+                else:
+                    QMessageBox.warning(self, "Uyarı", result["message"])
+            except Exception as e:
+                QMessageBox.critical(self, "Hata", f"Stok kaydı silinirken hata oluştu:\n{str(e)}")
 
     # --- filtreleme & tablo doldurma
     def apply_filters(self):
