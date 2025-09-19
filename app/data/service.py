@@ -28,12 +28,15 @@ class DataService(QObject):
     customersChanged = pyqtSignal()
     cashChanged = pyqtSignal()
     saleCommitted = pyqtSignal(dict)  # {sale_id, total, paid, due, ...}
+    marketDataUpdated = pyqtSignal()
 
     CATEGORIES = ["Bilezik","Yüzük","Kolye","Küpe","Külçe","Gram"]
 
     def __init__(self, path="orbitx.db", parent=None):
         super().__init__(parent)
         self.db = DB(path)
+        # cached market data from external API
+        self.market_data = {}
 
     # --- seed ---
     MOCK_STOCK = [
@@ -194,6 +197,68 @@ class DataService(QObject):
         rows = self.db.cx.execute("SELECT * FROM cash_ledger ORDER BY date DESC, id DESC").fetchall()
         return [dict(r) for r in rows]
 
+    # --- external market data ---
+    def fetch_market_prices(self, url: str = "https://displaydata01.orbitbulut.com/eyyupoglu_altin_v1/verileriGetir?tip=altin", timeout: int = 6, apply_to_stock: bool = False):
+        """Fetch market gold/altar prices from external API and cache them in self.market_data.
+        Emits marketDataUpdated on success. Does not raise on network errors.
+        """
+        try:
+            # prefer requests if available
+            try:
+                import requests
+                resp = requests.get(url, timeout=timeout)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception:
+                # fallback to urllib
+                import urllib.request, json
+                with urllib.request.urlopen(url, timeout=timeout) as u:
+                    data = json.loads(u.read().decode('utf-8'))
+
+            # normalize into dict keyed by kod
+            md = {}
+            for item in data:
+                kod = item.get('kod') or item.get('ad')
+                if not kod:
+                    continue
+                md[kod] = {
+                    'id': item.get('id'),
+                    'name': item.get('yeni_ad') or item.get('ad'),
+                    'kod': kod,
+                    'alis': float(item.get('alis') or 0.0),
+                    'satis': float(item.get('satis') or 0.0),
+                    'kapanis': float(item.get('kapanis') or 0.0),
+                    'tarih': item.get('tarih')
+                }
+
+            self.market_data = md
+            # Optionally apply market sell prices to existing stock items (match by code or name)
+            if apply_to_stock:
+                try:
+                    with self.db.tx() as cx:
+                        for kod, info in md.items():
+                            # Try match by code first
+                            updated = cx.execute("UPDATE stock_items SET sell_price=? WHERE code=?",
+                                                (info['satis'], kod)).fetchone()
+                            # If no row updated, try match by name (yeni_ad)
+                            if cx.execute("SELECT changes()").fetchone()[0] == 0:
+                                cx.execute("UPDATE stock_items SET sell_price=? WHERE name LIKE ?",
+                                           (info['satis'], f"%{info['name']}%"))
+                except Exception:
+                    pass
+                try:
+                    self.stockChanged.emit()
+                except Exception:
+                    pass
+            try:
+                self.marketDataUpdated.emit()
+            except Exception:
+                pass
+            return md
+        except Exception as e:
+            # network error or parsing error, don't raise to caller; return empty
+            return {}
+
     # --- yardımcılar ---
     def _customer_id(self, display_text: str):
         if not display_text:
@@ -346,3 +411,24 @@ class DataService(QObject):
         self.saleCommitted.emit(payload)
         self.stockChanged.emit(); self.customersChanged.emit()
         return payload
+
+    def get_recent_transactions(self, limit: int = 7):
+        """Son işlemleri getirir"""
+        query = """
+        SELECT
+            s.id,
+            s.type as kind,
+            s.date,
+            s.doc_no,
+            COALESCE(c.name, 'Nakit') as who,
+            s.total,
+            s.pay_type,
+            s.due,
+            s.created_at
+        FROM sales s
+        LEFT JOIN customers c ON s.customer_id = c.id
+        ORDER BY s.date DESC, s.id DESC
+        LIMIT ?
+        """
+        rows = self.db.cx.execute(query, (limit,)).fetchall()
+        return [dict(row) for row in rows]

@@ -62,6 +62,15 @@ QLabel[variant="muted"] {{
   color: {p['MUTED']};
   font-size: 12px;
 }}
+QLabel[variant="success"] {{
+  color: #4CAF50;
+}}
+QLabel[variant="danger"] {{
+  color: #F44336;
+}}
+QLabel[variant="warning"] {{
+  color: #FF9800;
+}}
 
 QPushButton {{
   background: transparent;
@@ -235,6 +244,18 @@ def apply_dialog_theme(dialog, scheme: str = "dim"):
             color: {p['TEXT']};
             font-weight: 700;
             font-size: 16px;
+        }}
+
+        QLabel[variant="success"] {{
+            color: #4CAF50;
+        }}
+
+        QLabel[variant="danger"] {{
+            color: #F44336;
+        }}
+
+        QLabel[variant="warning"] {{
+            color: #FF9800;
         }}
 
         /* GroupBox'lar */

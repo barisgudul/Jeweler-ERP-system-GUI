@@ -8,31 +8,28 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout, QStackedWidget
 from PyQt6.QtCore import QTimer
 from theme import apply_theme
-from sidebar import Sidebar
-from pages.login import LoginPage
-from pages.dashboard import DashboardPage
-from pages.stock import StockPage
-from pages.customers import CustomersPage
-from pages.sales import SalesPage
-from pages.finance import FinancePage
-from pages.reports import ReportsPage
-from pages.parameters import ParametersPage
 from data.service import DataService
+
+# Import other modules after QApplication is created in main
+def create_main_window():
+    from sidebar import Sidebar
+    from pages.login import LoginPage
+    from pages.dashboard import DashboardPage
+    from pages.stock import StockPage
+    from pages.customers import CustomersPage
+    from pages.sales import SalesPage
+    from pages.finance import FinancePage
+    from pages.reports import ReportsPage
+    from pages.parameters import ParametersPage
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Kuyumcu ERP — Zarif")
 
-        # Ekran boyutuna göre responsive pencere
-        from PyQt6.QtGui import QGuiApplication
-        screen = QGuiApplication.primaryScreen().availableGeometry()
-        screen_width = screen.width()
-        screen_height = screen.height()
-
-        # Pencereyi ekranın %85'ine sığdır
-        window_width = int(screen_width * 0.85)
-        window_height = int(screen_height * 0.85)
+        # Ekran boyutuna göre responsive pencere (şimdilik varsayılan boyutlar)
+        window_width = 1400
+        window_height = 800
 
         # Minimum boyutları koru
         min_width = 1200
@@ -48,6 +45,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # Import sidebar first
+        from sidebar import Sidebar
+
         # Sidebar (girişte gizli)
         self.sidebar = Sidebar()
         self.sidebar.setVisible(False)  # <— önemli
@@ -58,9 +58,26 @@ class MainWindow(QMainWindow):
         # İlk kez açılışta boşsa demo verisi yükle
         self.data.seed_demo_if_empty()
 
+        # Periodically fetch external market prices and notify UI
+        self._market_timer = QTimer(self)
+        self._market_timer.setInterval(30 * 1000)  # 30s (can be tuned)
+        self._market_timer.timeout.connect(lambda: self.data.fetch_market_prices())
+        self._market_timer.start()
+
         # Sayfa yığını
         self.stack = QStackedWidget()
         self.page_index = {"login": 0, "dashboard": 1, "stock": 2, "customers": 3, "sales": 4, "finance": 5, "reports": 6, "parameters": 7}
+
+        # Import modules and create pages
+        from sidebar import Sidebar
+        from pages.login import LoginPage
+        from pages.dashboard import DashboardPage
+        from pages.stock import StockPage
+        from pages.customers import CustomersPage
+        from pages.sales import SalesPage
+        from pages.finance import FinancePage
+        from pages.reports import ReportsPage
+        from pages.parameters import ParametersPage
 
         # Sayfalar
         self.login = LoginPage()
